@@ -84,10 +84,11 @@ Priority key: **P0** = required for initial usable release; **P1** = important f
 
 ### 8.1 Workspace and navigation
 
-- **FR-001 (P0):** Provide clear navigation for Overview, Repositories, Task Generator, Task Packages, and Validation.
+- **FR-001 (P0):** Provide clear navigation for Overview, Projects, Task Generator, Solution & tests, Task Packages, and Agent Evaluation. Projects is a portfolio view; manage repository connections, components, branches, pinned commits, and project-level scope inside each project. Shared task workflows must work across the project portfolio, while each individual task remains pinned to one project's selected component baselines. Present validation as a contextual quality-review step in the task/package workflow rather than a separate top-level destination.
 - **FR-002 (P0):** Show task and repository status using explicit labels; do not imply real execution for demo or simulated data.
 - **FR-003 (P1):** Provide global search and keyboard access to relevant workspace records.
 - **FR-004 (P1):** Preserve usable layouts on desktop, tablet, and mobile viewports and support keyboard navigation.
+- **FR-005 (P1):** Provide an all-projects workspace scope by default and let users filter shared task, package, and evaluation views to a selected project without changing the project's ownership of repository components.
 
 ### 8.2 Repository management
 
@@ -104,7 +105,7 @@ Priority key: **P0** = required for initial usable release; **P1** = important f
 
 ### 8.3 Task generation and editing
 
-- **FR-020 (P0):** Let the user select a repository version, generation approach, feature area, difficulty, and optional context.
+- **FR-020 (P0):** Let the user select one project, one or more component baselines within it, a generation approach, feature area, difficulty, and optional context.
 - **FR-021 (P0):** Generate a task title, background, scope, requirements, constraints, acceptance criteria, and expected verification approach.
 - **FR-022 (P0):** Ground the proposal in relevant repository files and stack details. Keep references/evidence available to the reviewer.
 - **FR-023 (P0):** Express acceptance criteria as observable behaviors, including relevant boundary cases and preservation of existing behavior.
@@ -134,7 +135,7 @@ Priority key: **P0** = required for initial usable release; **P1** = important f
 
 ### 8.6 Package library and export
 
-- **FR-050 (P0):** List task packages with searchable title/ID, repository, difficulty, commit, and validation state.
+- **FR-050 (P0):** List task packages across projects with searchable title/ID, project and component scope, difficulty, baseline commit, and validation state.
 - **FR-051 (P0):** Support package lifecycle states: Draft, Ready for validation, Validation failed, Validated, Needs review, and Archived.
 - **FR-052 (P0):** Export the task instructions, Harbor task metadata, execution environment/setup, reference implementation, tests, repository/version metadata, and validation report required by the configured interface.
 - **FR-053 (P0):** Validate exported package structure against the supplied Harbor interface/schema and display actionable schema errors.
@@ -318,4 +319,4 @@ Add GitHub/agent adapters, isolated parallel runs, submission review, evidence c
 
 ## 18. Current prototype reference
 
-The current single-page prototype is [forgebench_coding_task_factory.html](forgebench_coding_task_factory.html). It demonstrates the planned navigation and selected front-end interactions, including task drafting, search/filter, local draft storage, and metadata export. Treat all repository details, validation counts, activity, and agent scores shown as sample content unless backed by real execution records.
+The current single-page prototype is [index.html](index.html). Projects own their repository components and pinned baselines; quality checks are reached from the task workflow rather than the primary navigation. It demonstrates selected front-end interactions, including task drafting, search/filter, local draft storage, and metadata export. Treat all repository details, quality results, activity, and agent scores shown as sample content unless backed by real execution records.

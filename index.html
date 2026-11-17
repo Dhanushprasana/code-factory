@@ -98,6 +98,127 @@ body{background:var(--bg);color:var(--ink);font-size:13px;letter-spacing:0}.app{
 @media(max-width:760px){.app{display:block}.sidebar{position:fixed;left:0;top:0;bottom:0;width:254px;height:100dvh;z-index:30;transform:translateX(-104%);transition:transform .22s ease;padding:20px 14px;box-shadow:15px 0 35px #0e162a26}.sidebar.mobile-open{transform:translateX(0)}.brand{justify-content:flex-start;padding:0 9px 13px}.brand span:last-child,.navlabel,.nav button .navtext,.sidebottom{display:block}.nav button{justify-content:flex-start;padding:8px 10px}.nav .ico{width:18px}.workspace{width:100%}.mobile-menu{display:grid;place-items:center}.topbar{height:58px;padding:0 13px}.top-project-label{padding:4px 6px}.top-project-label>span,.top-env{display:none}.top-project-label select{max-width:116px;font-size:9px}.topright{gap:7px}.main{padding:20px 14px 40px}.pagehead{display:flex;align-items:flex-start;flex-direction:column;gap:12px;margin-bottom:17px}.pagehead h1{font-size:22px}.pagehead .actions{margin-top:0;width:100%}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.contentgrid,.lower{grid-template-columns:1fr}.two{grid-template-columns:1fr}.pipeline{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:430px){.topbar-left{gap:7px}.crumb{gap:5px;font-size:9px}.crumb strong{font-size:10px}.top-project-label select{max-width:95px}.avatar{width:27px;height:27px}.main{padding-inline:11px}.stat{padding:11px}.statnum{font-size:20px}.pagehead h1{font-size:20px}.actions .btn{flex:1}.project-stats{grid-template-columns:1fr 1fr}}
 
+/* Project-first workspace refresh */
+:root{--bg:#f6f7fa;--panel:#fff;--ink:#1d2636;--muted:#6f7a8d;--line:#e4e8ef;--blue:#5667d8;--blue2:#eef0ff;--green:#16764f;--greenbg:#eaf6ef;--amber:#946318;--amberbg:#fbf3e5;--shadow:0 3px 14px rgba(27,39,62,.045)}
+body{background:var(--bg);color:var(--ink)}
+.app{grid-template-columns:248px minmax(0,1fr)}
+.sidebar{position:sticky;top:0;height:100vh;overflow-y:auto;background:#182238;padding:22px 15px;gap:22px}
+.brand{font-size:16px;padding:0 9px}.brandmark{border-radius:9px}
+.navlabel{margin-bottom:7px;color:#8794ad;font-size:9px}
+.nav{gap:4px}.nav button{padding:10px 11px;border-radius:7px;color:#bac4d7;font-size:12px}
+.nav button:hover{transform:none;background:#24314a}.nav button.active{background:#2b3955;box-shadow:inset 3px 0 #9aa4ff}
+.nav-more{padding-top:10px;border-top:1px solid #303b51}
+.nav-more summary{list-style:none;cursor:pointer;padding:9px 11px;color:#aab5ca;font-size:11px;font-weight:650;border-radius:7px}
+.nav-more summary::-webkit-details-marker{display:none}
+.nav-more summary:after{content:"＋";float:right;color:#9da9c0}
+.nav-more[open] summary:after{content:"−"}
+.nav-more[open] .nav{margin-top:5px}
+.sidebottom{margin-top:auto}
+.topbar{height:64px;padding:0 30px;background:rgba(255,255,255,.96);backdrop-filter:blur(8px)}
+.main{max-width:1420px;padding:32px 32px 56px}
+.pagehead{margin-bottom:22px}.pagehead h1{font-size:29px;letter-spacing:-.9px;font-weight:680}
+.sub{max-width:760px;line-height:1.6}
+.card{border-radius:12px;border-color:#e4e8ef;box-shadow:var(--shadow)}
+.card:hover{border-color:#dbe1ec}
+.section{padding:21px}
+.sectionhead{margin-bottom:17px}
+.sectionhead h2{font-size:14px}
+.btn{border-radius:8px;font-size:12px;padding:9px 14px}
+.btn.primary{background:#4f5fd1;border-color:#4f5fd1;box-shadow:0 3px 8px #4f5fd11c}
+.btn.primary:hover{background:#414fb8;border-color:#414fb8}
+.field{border-radius:8px}
+.project-overview-card{display:flex;justify-content:space-between;align-items:center;gap:24px;padding:25px 27px;background:linear-gradient(110deg,#fff 55%,#f0f2ff)}
+.project-overview-copy h2{font-size:24px;letter-spacing:-.6px;margin:12px 0 4px}
+.project-overview-copy p{margin:0;color:var(--muted);font-size:12px}
+.project-overview-meta{display:flex;gap:25px;flex-wrap:wrap;margin-top:18px;color:var(--muted);font-size:11px}
+.project-overview-meta b{color:var(--ink);font-size:13px;margin-right:4px}
+.workflow-card{margin-top:16px}
+.workflow-steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.workflow-step{display:grid;gap:6px;min-height:110px;padding:15px;border:1px solid var(--line);border-radius:9px;background:#fbfcfe}
+.workflow-step>span{display:grid;place-items:center;width:24px;height:24px;border-radius:7px;background:#eef0ff;color:#4f5fd1;font-size:10px;font-weight:750}
+.workflow-step b{font-size:12px}.workflow-step small{font-size:10px;color:var(--muted);line-height:1.5}
+.workflow-card+.contentgrid{margin-top:16px}
+.activityicon{font-size:9px;font-weight:750;color:#65708a}
+.taskrow{padding:13px}.taskrow strong{font-size:12px}.taskrow small{line-height:1.5}
+.project-summary{background:linear-gradient(105deg,#fff,#f8f9ff)}
+.project-hero h2{font-size:23px;margin:11px 0 3px;letter-spacing:-.6px}
+.project-stats{gap:12px}.project-stats span{background:#f8f9fc;padding:11px 13px;border-radius:8px}
+.project-stats b{display:block;color:var(--ink);font-size:13px}
+.project-table td{vertical-align:middle}
+.projects-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:16px}
+.portfolio-card{padding:18px;display:flex;flex-direction:column;min-height:220px}
+.portfolio-card-top{display:flex;justify-content:space-between;align-items:center}
+.portfolio-mark{display:grid;place-items:center;width:34px;height:34px;border-radius:9px;background:#edf0ff;color:#4f61d9;font-size:10px;font-weight:800}
+.portfolio-mark.violet{background:#f2ecff;color:#7555bd}.portfolio-mark.green{background:#e8f6ee;color:#197849}
+.portfolio-card h2{margin:17px 0 6px;font-size:15px}.portfolio-card p{margin:0;color:var(--muted);font-size:10px;line-height:1.55}
+.portfolio-meta{display:grid;gap:5px;margin:14px 0;color:#6b7588;font-size:9px}
+.portfolio-card .btn{align-self:flex-start;margin-top:auto}
+.project-detail-toolbar{display:flex;align-items:center;gap:14px;margin:16px 0 10px}
+.project-detail-toolbar>div:first-child{display:grid;gap:4px;margin-right:auto}
+.project-detail-toolbar strong{font-size:13px}
+.project-shortcuts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:18px 0}
+.project-shortcut{display:flex;min-width:0;min-height:180px;flex-direction:column;align-items:flex-start;gap:14px;padding:20px 21px;text-align:left;white-space:normal;cursor:pointer}
+.shortcut-icon{display:grid;place-items:center;width:38px;height:38px;border-radius:10px;background:#eef0ff;color:#5366e8;font-size:17px}
+.project-shortcut strong{font-size:13px;color:var(--ink)}
+.shortcut-copy{color:var(--muted);font-size:11px;font-weight:400;line-height:1.55}
+.shortcut-link{margin-top:auto;color:#4f5fd1;font-size:11px;font-weight:750}
+.solution-task-context{display:flex;align-items:end;gap:16px;margin-bottom:14px;padding:15px 18px}
+.solution-task-context>div{flex:1;min-width:0}
+.solution-task-context strong{display:block;padding:9px 0;color:#39445a;font-size:11px}
+.solution-task-context .pill{margin-bottom:8px}
+.table-wrap{max-width:100%;overflow-x:auto}
+.notice{background:#f2f4fb;color:#596579;line-height:1.6}
+.top-project-label span{font-size:9px;letter-spacing:.8px}
+.top-project-label select{font-size:11px}
+@media(max-width:1000px){
+ .app{grid-template-columns:72px minmax(0,1fr)}
+ .sidebar{width:72px;padding:18px 9px}
+ .nav-more summary{font-size:0;text-align:center;padding:10px 5px}
+ .nav-more summary:after{float:none;font-size:14px}
+}
+@media(min-width:821px) and (max-width:1000px){
+ .app{grid-template-columns:218px minmax(0,1fr)}
+ .sidebar{width:auto;padding:20px 12px}
+ .sidebar .brand span:last-child,.sidebar .navlabel,.sidebar .nav button .navtext,.sidebar .sidebottom{display:block}
+ .sidebar .nav button{justify-content:flex-start}
+ .sidebar .nav-more summary{font-size:11px;text-align:left;padding:9px 11px}
+ .sidebar .nav-more summary:after{float:right;font-size:11px}
+}
+@media(max-width:760px){
+ .app{display:block;min-height:100vh}
+ .sidebar{position:fixed;left:0;top:0;bottom:0;width:248px;height:100dvh;z-index:30;transform:translateX(-104%);transition:transform .22s ease;padding:20px 14px;box-shadow:15px 0 35px #0e162a26}
+ .sidebar.mobile-open{transform:translateX(0)}
+ .sidebar .brand span:last-child,.sidebar .navlabel,.sidebar .nav button .navtext,.sidebar .sidebottom{display:block}
+ .sidebar .brand{justify-content:flex-start;padding:0 9px 13px}
+ .sidebar .nav button{justify-content:flex-start;padding:9px 10px}
+ .sidebar .nav .ico{width:18px}
+ .sidebar .nav-more summary{font-size:11px;text-align:left;padding:9px 11px}
+ .sidebar .nav-more summary:after{float:right;font-size:11px}
+ .workspace{width:100%;min-width:0;grid-column:auto}
+ .mobile-menu{display:grid;place-items:center}
+ .project-overview-card{align-items:flex-start;flex-direction:column;padding:19px}
+ .projects-grid{grid-template-columns:1fr}
+ .project-shortcuts{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .project-shortcut{min-height:170px;padding:16px}
+ .project-detail-toolbar{align-items:stretch;flex-direction:column}
+ .project-detail-toolbar>div:first-child{margin-right:0}
+ .project-detail-toolbar .actions{width:100%}
+ .solution-task-context{align-items:stretch;flex-direction:column;gap:5px}
+ .project-overview-meta{gap:10px 17px}
+ .workflow-steps{grid-template-columns:1fr 1fr}
+ .topbar{padding:0 12px}
+ .main{padding:20px 12px 35px}
+}
+@media(max-width:760px){
+ #helpButton{display:none}
+ #solution>.grid.contentgrid{grid-template-columns:minmax(0,1fr)}
+ #solution>.grid.contentgrid>.card{min-width:0}
+ #solution .solution-preview{grid-template-columns:minmax(0,1fr)}
+ #solution .file-tree,#referencePatchFiles{min-width:0}
+ #referencePatchFiles span{display:block;overflow-wrap:anywhere}
+ #solution .solution-actions{flex-wrap:wrap}
+}
+@media(max-width:430px){.project-shortcuts{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -105,123 +226,102 @@ body{background:var(--bg);color:var(--ink);font-size:13px;letter-spacing:0}.app{
 <aside class="sidebar">
   <div class="brand"><div class="brandmark">F</div><span>ForgeBench</span></div>
   <div>
-    <div class="navlabel">BUILD</div>
+    <div class="navlabel">WORKSPACE</div>
     <nav class="nav">
       <button class="active" data-view="overview"><span class="ico">▦</span><span class="navtext">Overview</span></button>
-      <button data-view="repositories"><span class="ico">⌘</span><span class="navtext">Repositories</span></button>
       <button data-view="projects"><span class="ico">▧</span><span class="navtext">Projects</span></button>
-      <button data-view="explorer"><span class="ico">⌕</span><span class="navtext">Codebase explorer</span></button>
       <button data-view="generator"><span class="ico">✦</span><span class="navtext">Task Generator</span></button>
       <button data-view="solution"><span class="ico">⌘</span><span class="navtext">Solution & tests</span></button>
       <button data-view="tasks"><span class="ico">▤</span><span class="navtext">Task Packages</span></button>
     </nav>
   </div>
   <div>
-    <div class="navlabel">RUN & REVIEW</div>
+    <div class="navlabel">EVALUATION</div>
     <nav class="nav">
-      <button data-view="validation"><span class="ico">✓</span><span class="navtext">Validation Lab</span></button>
-      <button data-view="agents"><span class="ico">✧</span><span class="navtext">Agent connections</span></button>
-      <button data-view="runs"><span class="ico">⇄</span><span class="navtext">Parallel runs</span></button>
-      <button data-view="submissions"><span class="ico">⇧</span><span class="navtext">Submissions</span></button>
       <button data-view="evaluation"><span class="ico">◉</span><span class="navtext">Agent evaluation</span></button>
     </nav>
   </div>
-  <div>
-    <div class="navlabel">GOVERN</div>
+  <details class="nav-more">
+    <summary>More tools</summary>
     <nav class="nav">
+      <button data-view="explorer"><span class="ico">⌕</span><span class="navtext">Project explorer</span></button>
+      <button data-view="agents"><span class="ico">✧</span><span class="navtext">Agent connections</span></button>
+      <button data-view="runs"><span class="ico">⇄</span><span class="navtext">Parallel runs</span></button>
+      <button data-view="submissions"><span class="ico">⇧</span><span class="navtext">Submissions</span></button>
       <button data-view="truth"><span class="ico">◈</span><span class="navtext">Source of truth</span></button>
       <button data-view="publish"><span class="ico">↗</span><span class="navtext">Publish task</span></button>
-    </nav>
-  </div>
-  <div>
-    <div class="navlabel">MANAGE</div>
-    <nav class="nav">
       <button data-view="settings"><span class="ico">⚙</span><span class="navtext">Settings</span></button>
     </nav>
-  </div>
+  </details>
   <div class="sidebottom">Prototype workspace<br>Task Factory · v0.1</div>
 </aside>
 <div class="workspace">
 <header class="topbar">
   <div class="topbar-left"><button class="mobile-menu" type="button" onclick="toggleMobileNav()" aria-label="Toggle navigation">☰</button><div class="crumb"><span class="muted">FORGEBENCH</span><span class="crumb-sep">/</span><strong id="crumb">Overview</strong></div></div>
-  <div class="topright"><label class="top-project-label"><span>PROJECT</span><select id="globalProjectSelect" aria-label="Active project"><option value="forge-commerce">Forge Commerce</option><option value="account-platform">Account Platform</option></select></label><span class="pill blue top-env">Demo workspace</span><div class="avatar" title="Workspace profile">DB</div></div>
+  <div class="topright"><label class="top-project-label"><span>SCOPE</span><select id="globalProjectSelect" aria-label="Filter workspace by project"><option value="all-projects" selected>All projects</option><option value="forge-commerce">Forge Commerce</option><option value="account-platform">Account Platform</option><option value="task-manager">Task Manager</option></select></label><span class="pill blue top-env">Demo workspace</span><div class="avatar" title="Workspace profile">DB</div></div>
 </header>
 <main class="main">
 <section class="view active" id="overview">
-  <div class="pagehead"><div><div class="eyebrow">CODING TASK FACTORY</div><h1>Build better coding benchmarks.</h1><p class="sub">Turn real repositories into validated, reproducible tasks for AI coding agents.</p></div><div class="actions"><button class="btn" onclick="navigate('repositories')">Browse repositories</button><button class="btn primary" onclick="navigate('generator')">＋ Generate task</button></div></div>
-  <div class="grid stats">
-    <div class="card stat"><div class="stathead">Repositories analyzed <span>⌘</span></div><div class="statnum" id="statRepos">08</div><div class="trend">↑ 2 this week</div></div>
-    <div class="card stat"><div class="stathead">Tasks generated <span>▤</span></div><div class="statnum" id="statTasks">24</div><div class="trend">↑ 6 this week</div></div>
-    <div class="card stat"><div class="stathead">Validated packages <span>✓</span></div><div class="statnum" id="statValidated">19</div><div class="trend">79% validation rate</div></div>
-    <div class="card stat"><div class="stathead">Avg. mutation score <span>◎</span></div><div class="statnum">86.4%</div><div class="trend">Across validated tasks</div></div>
+  <div class="pagehead"><div><div class="eyebrow">WORKSPACE OVERVIEW</div><h1>One benchmark workflow. Every project.</h1><p class="sub">Create and review tasks across your project portfolio. Each task stays grounded in its selected project and pinned component baselines.</p></div><div class="actions"><button class="btn" onclick="navigate('projects')">View all projects</button><button class="btn primary" onclick="navigate('generator')">＋ Create a task</button></div></div>
+  <div class="card project-overview-card">
+    <div class="project-overview-copy"><span class="pill blue">ALL PROJECTS · DEMO DATA</span><h2>Shared task workbench</h2><p>Generation, solution review, packages and agent evaluation work across the selected project scope.</p><div class="project-overview-meta"><span><b>3</b> project workspaces</span><span><b>6</b> sample components</span><span><b>4</b> sample task packages</span></div></div>
+    <button class="btn primary" onclick="navigate('projects')">Explore project portfolio →</button>
+  </div>
+  <div class="card section workflow-card">
+    <div class="sectionhead"><div><h2>From project to benchmark</h2><small>A clear path from repository context to a reviewable package</small></div><span class="pill gray">Example workflow</span></div>
+    <div class="workflow-steps">
+      <div class="workflow-step"><span>01</span><b>Choose project scope</b><small>Select components and pin their commits.</small></div>
+      <div class="workflow-step"><span>02</span><b>Define the task</b><small>Review requirements and acceptance criteria.</small></div>
+      <div class="workflow-step"><span>03</span><b>Build solution & tests</b><small>Keep the reference answer and test oracle independent.</small></div>
+      <div class="workflow-step"><span>04</span><b>Check quality & package</b><small>Inspect actual evidence before approving export.</small></div>
+    </div>
   </div>
   <div class="grid contentgrid">
     <div class="card section">
-      <div class="sectionhead"><h2>Start with a repository</h2><span class="pill blue">New analysis</span></div>
-      <label class="fieldlabel" for="repoUrl">Git repository URL</label>
-      <div class="formrow"><input class="field" id="repoUrl" value="https://github.com/example/shopping-cart" placeholder="https://github.com/owner/repository"><button class="btn primary" onclick="analyzeRepo()">Analyze repository</button></div>
-      <div class="hint">Connect a public repository or select a private repository through the provider authorization flow. Private source is never accessed with a pasted token.</div>
-      <div class="repo-meta"><span>◈ JavaScript / Node.js</span><span>◇ Express</span><span>▣ Jest</span><span>⌁ main · a83f21c</span></div>
-      <div class="divider"></div>
-      <div class="sectionhead"><h2>Generation pipeline</h2><small id="pipelineStatus">Sample run · completed</small></div>
-      <div class="pipeline" id="pipeline">
-        <div class="step done"><div class="num">01 · DONE</div><strong>Analyze codebase</strong><small>Stack and modules detected</small></div>
-        <div class="step done"><div class="num">02 · DONE</div><strong>Generate task</strong><small>Requirements created</small></div>
-        <div class="step done"><div class="num">03 · DONE</div><strong>Build solution</strong><small>Reference patch created</small></div>
-        <div class="step done"><div class="num">04 · DONE</div><strong>Verify & package</strong><small>Checks completed</small></div>
+      <div class="sectionhead"><h2>Continue a task</h2><button class="btn" onclick="navigate('tasks')">View package library →</button></div>
+      <div class="tasklist" id="recentTasks">
+        <div class="taskrow" data-project="forge-commerce"><div><strong>TASK-024 · Inventory reservation</strong><small>Forge Commerce · API · validation evidence available</small></div><span class="pill green">Validated · demo</span></div>
+        <div class="taskrow" data-project="account-platform"><div><strong>TASK-022 · Login rate limiting</strong><small>Account Platform · API · reviewer action needed</small></div><span class="pill amber">Needs review · demo</span></div>
       </div>
     </div>
     <div class="card section">
-      <div class="sectionhead"><h2>Recent activity</h2><small>Latest events</small></div>
+      <div class="sectionhead"><h2>Project portfolio</h2><button class="btn" onclick="navigate('projects')">View all →</button></div>
       <div class="activity">
-        <div class="activityitem"><div class="activityicon">✓</div><div><strong>TASK-024 passed validation</strong><small>Inventory reservation · 12 minutes ago</small></div></div>
-        <div class="activityitem"><div class="activityicon">✦</div><div><strong>New task generated</strong><small>Coupon eligibility rules · 38 minutes ago</small></div></div>
-        <div class="activityitem"><div class="activityicon">⌘</div><div><strong>Repository analyzed</strong><small>shopping-cart · 1 hour ago</small></div></div>
-        <div class="activityitem"><div class="activityicon">◎</div><div><strong>Agent evaluation completed</strong><small>3 agents compared · Yesterday</small></div></div>
+        <div class="activityitem"><div class="activityicon">FC</div><div><strong>Forge Commerce</strong><small>3 components · 2 sample tasks</small></div></div>
+        <div class="activityitem"><div class="activityicon">AP</div><div><strong>Account Platform</strong><small>2 components · 1 sample task</small></div></div>
+        <div class="activityitem"><div class="activityicon">TM</div><div><strong>Task Manager</strong><small>1 component · 1 sample task</small></div></div>
       </div>
     </div>
-  </div>
-  <div class="grid lower">
-    <div class="card section"><div class="sectionhead"><h2>Recent task packages</h2><button class="btn" onclick="navigate('tasks')">View all</button></div><div class="tasklist" id="recentTasks">
-      <div class="taskrow"><div><strong>TASK-024 · Inventory reservation</strong><small>shopping-cart · Node.js · Medium</small></div><span class="pill green">Validated</span></div>
-      <div class="taskrow"><div><strong>TASK-023 · Coupon eligibility</strong><small>shopping-cart · Node.js · Easy</small></div><span class="pill green">Validated</span></div>
-      <div class="taskrow"><div><strong>TASK-022 · Login rate limiting</strong><small>account-service · Python · Hard</small></div><span class="pill amber">Review</span></div>
-    </div></div>
-    <div class="card section"><div class="sectionhead"><h2>Agent leaderboard</h2><small>Sample evaluation</small></div><table class="table"><thead><tr><th>Agent</th><th>Pass rate</th><th>Score</th></tr></thead><tbody><tr><td>Agent Alpha</td><td>92%</td><td class="score">92</td></tr><tr><td>Agent Beta</td><td>86%</td><td class="score">86</td></tr><tr><td>Agent Gamma</td><td>79%</td><td class="score">79</td></tr></tbody></table><div class="hint">Illustrative data only. Connect agents and run evaluations to populate real results.</div></div>
-  </div>
-</section>
-
-<section class="view" id="repositories">
-  <div class="pagehead"><div><div class="eyebrow">PROJECT SOURCES</div><h1>Repositories</h1><p class="sub">Repositories belong to a project. Bind each component to the exact branch and commit used by a task run.</p></div><div class="actions"><button class="btn" onclick="navigate('projects')">View projects</button><button class="btn" onclick="navigate('explorer')">Explore codebase</button><button class="btn primary" onclick="analyzeRepo(true)">＋ Analyze repository</button></div></div>
-  <div class="card section project-context-strip"><div><span class="eyebrow">ACTIVE PROJECT</span><h2 id="activeProjectName">Forge Commerce</h2><p class="muted">A project groups independently versioned repositories and branches into one feature workspace.</p></div><button class="btn" onclick="navigate('projects')">Manage project components →</button></div>
-  <div class="card section">
-    <div class="sectionhead"><h2>Connect repository</h2><div class="actions"><span class="pill blue">Git integration</span><button class="btn" type="button" onclick="connectGitHub()">Connect GitHub</button></div></div>
-    <div class="repo-connect-grid"><div><label class="fieldlabel" for="repoVisibility">Repository visibility</label><select class="field" id="repoVisibility"><option value="public">Public repository</option><option value="private">Private repository</option></select></div><div><label class="fieldlabel" for="repoProjectAssign">Add to project</label><select class="field" id="repoProjectAssign"><option>Forge Commerce</option><option>Account Platform</option></select></div></div>
-    <label class="fieldlabel" for="repoUrl2" style="margin-top:13px">Repository URL</label><div class="formrow"><input class="field" id="repoUrl2" placeholder="https://github.com/org/private-repository"><button class="btn primary" onclick="analyzeRepo(true)">Analyze repository</button></div>
-    <div class="private-access-panel" id="privateRepoInfo"><div class="private-shield">⌑</div><div><strong>Private repository access is brokered securely</strong><p>Install the ForgeBench GitHub App on selected repositories. Source access is read-only by default; pull-request write access is a separate, optional approval step.</p><button class="text-action" type="button" onclick="connectGitHub()">Configure private access →</button></div></div>
-    <div class="notice">Never paste a Personal Access Token or private key into this page. The production integration uses GitHub's authorization flow, short-lived installation tokens held server-side, encrypted secret storage, audit logs, and revocation controls. This prototype does not authenticate or fetch code.</div>
-  </div>
-  <div class="card section" style="margin-top:17px"><div class="sectionhead"><div><h2>Connected repositories</h2><small>3 repositories</small></div><button class="btn" onclick="navigate('explorer')">Explore selected →</button></div><table class="table"><thead><tr><th>Repository</th><th>Stack</th><th>Default branch</th><th>Starting commit</th><th>Status</th></tr></thead><tbody>
-  <tr class="repo-selectable" data-repo-key="shopping-cart · a83f21c"><td><strong>shopping-cart</strong><br><span class="muted">example/shopping-cart</span></td><td>Node · Express</td><td>main</td><td><code>a83f21c</code></td><td><button class="pill green repo-open" onclick="openRepositoryExplorer('shopping-cart · a83f21c')">Analyzed · Explore</button></td></tr>
-  <tr><td><strong>account-service</strong><br><span class="muted">example/account-service</span></td><td>Python · FastAPI</td><td>main</td><td><code>e219a7b</code></td><td><span class="pill green">Analyzed</span></td></tr>
-  <tr><td><strong>task-manager</strong><br><span class="muted">example/task-manager</span></td><td>Java · Spring</td><td>develop</td><td><code>9c10d42</code></td><td><span class="pill amber">Needs review</span></td></tr>
-  </tbody></table>
   </div>
 </section>
 
 <section class="view" id="projects">
-  <div class="pagehead"><div><div class="eyebrow">WORKSPACE MODEL</div><h1>Projects</h1><p class="sub">Group multiple repositories and branch baselines under one product or initiative.</p></div><button class="btn primary" onclick="openProjectDialog()">＋ Create project</button></div>
-  <div class="card project-summary section"><div class="project-hero"><div><span class="pill blue">Active project</span><h2 id="projectHeading">Forge Commerce</h2><p>Multi-repository commerce platform · Owner: Platform team · Updated today</p></div><button class="btn" onclick="openProjectDialog()">Edit project</button></div><div class="project-stats"><span><b id="projectRepoCount">3</b> repositories</span><span><b>3</b> component areas</span><span><b>2</b> active task packages</span><span><b>main + release branches</b> tracked baselines</span></div></div>
-  <div class="card section" style="margin-top:16px"><div class="sectionhead"><div><h2>Project components</h2><small>Each repository has its own branch and commit pin</small></div><button class="btn primary" onclick="openProjectRepoDialog()">＋ Add repository</button></div><div class="table-wrap"><table class="table project-table"><thead><tr><th>Component</th><th>Repository</th><th>Branch</th><th>Baseline commit</th><th>Stack</th><th>Role in project</th><th>Status</th></tr></thead><tbody id="projectReposBody">
-    <tr data-project-repo="frontend"><td><span class="component-icon fe">FE</span><strong>Web frontend</strong></td><td>forge-commerce-web</td><td><code>main</code></td><td><code>f31bc92</code></td><td>React · TypeScript</td><td>User interface and browser flows</td><td><span class="pill green">Analyzed</span></td></tr>
-    <tr data-project-repo="backend"><td><span class="component-icon be">BE</span><strong>Commerce API</strong></td><td>shopping-cart</td><td><code>main</code></td><td><code>a83f21c</code></td><td>Node.js · Express</td><td>REST API, checkout, inventory</td><td><span class="pill green">Analyzed</span></td></tr>
-    <tr data-project-repo="data"><td><span class="component-icon de">DE</span><strong>Data platform</strong></td><td>forge-commerce-data</td><td><code>release/2026-q4</code></td><td><code>c91a204</code></td><td>Python · Airflow · dbt</td><td>Ingestion, models, warehouse jobs</td><td><span class="pill amber">Needs review</span></td></tr>
-  </tbody></table></div><div class="notice">A project does not imply a shared Git repository. Each component keeps its own branch, commit SHA, environment, and change set. A task records a baseline manifest covering every component it touches.</div></div>
-  <div class="grid contentgrid" style="margin-top:16px"><div class="card section"><div class="sectionhead"><h2>Task component scope</h2><span class="pill blue">TASK-031 · Multi-repo MFA</span></div><p class="muted">This task spans the web frontend and account API. Data-platform repository is explicitly excluded from the task baseline.</p><div class="scope-list"><label><input type="checkbox" checked> <span><b>Web frontend</b><small>forge-commerce-web · main @ f31bc92</small></span><i>FE</i></label><label><input type="checkbox" checked> <span><b>Commerce API</b><small>shopping-cart · main @ a83f21c</small></span><i>BE</i></label><label><input type="checkbox"> <span><b>Data platform</b><small>forge-commerce-data · release/2026-q4 @ c91a204</small></span><i>DE</i></label></div><div class="hint">Agents receive the same manifest of included repo/branch/commit tuples, in one isolated multi-repo workspace per agent.</div></div><div class="card section"><div class="sectionhead"><h2>Project-wide changes</h2><span class="pill gray">Comparison view</span></div><div class="project-flow"><span>FE repo</span><b>↔</b><span>BE repo</span><b>↔</b><span>Data repo</span></div><p class="muted">Review per-repository patches for each agent, then inspect the combined project-level patch. Tests run against the complete workspace using a frozen task/test version.</p><button class="btn" onclick="navigate('submissions')">Review multi-repo submissions →</button></div></div>
+  <div class="pagehead"><div><div class="eyebrow">PROJECT PORTFOLIO</div><h1 id="projectPageTitle">All projects</h1><p class="sub">Projects own their repositories and baselines. Shared task workflows can draw on any project in this portfolio.</p></div></div>
+  <div class="projects-grid" id="projectPortfolio">
+    <article class="card portfolio-card" data-project-card="forge-commerce"><div class="portfolio-card-top"><span class="portfolio-mark">FC</span><span class="pill blue">3 components</span></div><h2>Forge Commerce</h2><p>Commerce product workspace spanning web, API and data services.</p><div class="portfolio-meta"><span>2 sample task packages</span><span>Owner · Platform team</span></div><button class="btn primary" type="button" onclick="openProject('forge-commerce')">Open project →</button></article>
+    <article class="card portfolio-card" data-project-card="account-platform"><div class="portfolio-card-top"><span class="portfolio-mark violet">AP</span><span class="pill blue">2 components</span></div><h2>Account Platform</h2><p>Identity workspace for account management, sessions and MFA.</p><div class="portfolio-meta"><span>1 sample task package</span><span>Owner · Platform team</span></div><button class="btn primary" type="button" onclick="openProject('account-platform')">Open project →</button></article>
+    <article class="card portfolio-card" data-project-card="task-manager"><div class="portfolio-card-top"><span class="portfolio-mark green">TM</span><span class="pill blue">1 component</span></div><h2>Task Manager</h2><p>Scheduling workspace for task lifecycle and due-date reminders.</p><div class="portfolio-meta"><span>1 sample task package</span><span>Owner · Productivity team</span></div><button class="btn primary" type="button" onclick="openProject('task-manager')">Open project →</button></article>
+  </div>
+  <div id="projectDetail" hidden>
+  <div class="project-detail-toolbar"><div><span class="eyebrow">SELECTED PROJECT</span><strong id="selectedProjectLabel">Forge Commerce</strong></div><button class="btn" type="button" onclick="showAllProjects()">← Back to all projects</button><div class="actions"><button class="btn" type="button" onclick="connectGitHub()">Connect GitHub</button><button class="btn primary" onclick="openProjectRepoDialog()">＋ Add component</button></div></div>
+  <div class="card project-summary section"><div class="project-hero"><div><span class="pill blue">Active project · demo data</span><h2 id="projectHeading">Forge Commerce</h2><p id="projectDescription">Multi-repository commerce platform · Owner: Platform team</p></div><button class="btn" onclick="openProjectDialog()">Edit project</button></div><div class="project-stats"><span><b id="projectRepoCount">3</b> components</span><span><b id="projectAreaCount">3</b> component areas</span><span><b>2</b> active task packages</span><span><b>main + release branches</b> tracked baselines</span></div></div>
+  <div class="project-shortcuts" aria-label="Project workspaces">
+    <button class="card project-shortcut" type="button" onclick="openCurrentProjectExplorer()"><span class="shortcut-icon">⌕</span><strong>Project explorer</strong><span class="shortcut-copy">Explore this project's components, architecture and feature areas.</span><span class="shortcut-link">Open explorer →</span></button>
+    <button class="card project-shortcut" type="button" onclick="navigate('generator')"><span class="shortcut-icon">✦</span><strong>Task generator</strong><span class="shortcut-copy">Create a task from this project's selected component baselines.</span><span class="shortcut-link">Create project task →</span></button>
+    <button class="card project-shortcut" type="button" onclick="navigate('solution')"><span class="shortcut-icon">⌘</span><strong>Solutions &amp; tests</strong><span class="shortcut-copy">Review reference artifacts for tasks owned by this project.</span><span class="shortcut-link">Open task artifacts →</span></button>
+    <button class="card project-shortcut" type="button" onclick="navigate('tasks')"><span class="shortcut-icon">▤</span><strong>Task packages</strong><span class="shortcut-copy">Browse packages and quality state belonging to this project.</span><span class="shortcut-link">Browse project packages →</span></button>
+  </div>
+  <div class="card section" style="margin-top:16px"><div class="sectionhead"><div><h2>Project components</h2><small>Each connected repository keeps its own branch, commit and environment</small></div><button class="btn primary" onclick="openProjectRepoDialog()">＋ Add component</button></div><div class="table-wrap"><table class="table project-table"><thead><tr><th>Component</th><th>Repository</th><th>Branch</th><th>Baseline commit</th><th>Stack</th><th>Role in project</th><th>Status</th></tr></thead><tbody id="projectReposBody">
+    <tr data-project-repo="frontend"><td><span class="component-icon fe">FE</span><strong>Web frontend</strong></td><td>forge-commerce-web</td><td><code>main</code></td><td><code>f31bc92</code></td><td>React · TypeScript</td><td>User interface and browser flows</td><td><span class="pill gray">Analyzed · sample</span></td></tr>
+    <tr data-project-repo="backend"><td><span class="component-icon be">BE</span><strong>Commerce API</strong></td><td>shopping-cart</td><td><code>main</code></td><td><code>a83f21c</code></td><td>Node.js · Express</td><td>REST API, checkout, inventory</td><td><span class="pill gray">Analyzed · sample</span></td></tr>
+    <tr data-project-repo="data"><td><span class="component-icon de">DE</span><strong>Data platform</strong></td><td>forge-commerce-data</td><td><code>release/2026-q4</code></td><td><code>c91a204</code></td><td>Python · Airflow · dbt</td><td>Ingestion, models, warehouse jobs</td><td><span class="pill gray">Needs review · sample</span></td></tr>
+  </tbody></table></div><div class="notice">Repositories are managed as components inside the project—there is no separate repository workspace. Each component keeps its own branch, commit SHA, environment and change set. A task records a baseline manifest for every included component. This static prototype does not connect to GitHub or fetch source.</div></div>
+  <div class="grid contentgrid" style="margin-top:16px"><div class="card section"><div class="sectionhead"><h2>Task component scope</h2><span class="pill blue">Example baseline</span></div><p class="muted" id="projectScopeDescription">This task spans the web frontend and account API. Data-platform repository is explicitly excluded from the task baseline.</p><div class="scope-list"><label data-component-role="frontend"><input type="checkbox" checked> <span><b>Web frontend</b><small>forge-commerce-web · main @ f31bc92</small></span><i>FE</i></label><label data-component-role="backend"><input type="checkbox" checked> <span><b>Commerce API</b><small>shopping-cart · main @ a83f21c</small></span><i>BE</i></label><label data-component-role="data"><input type="checkbox"> <span><b>Data platform</b><small>forge-commerce-data · release/2026-q4 @ c91a204</small></span><i>DE</i></label></div><div class="hint">Agents receive the same manifest of included component/repository/branch/commit tuples in one isolated multi-repository workspace per agent.</div></div><div class="card section"><div class="sectionhead"><h2>Project-wide changes</h2><span class="pill gray">Comparison view</span></div><div class="project-flow"><span>FE component</span><b>↔</b><span>BE component</span><b>↔</b><span>Data component</span></div><p class="muted">Review each repository patch, then inspect the combined project-level change. Tests run against the complete workspace using a frozen task/test version.</p><button class="btn" onclick="navigate('submissions')">Review project submissions →</button></div></div>
+  </div>
 </section>
 
 <section class="view" id="explorer">
-  <div class="pagehead"><div><div class="eyebrow">CODEBASE INTELLIGENCE</div><h1>Repository explorer</h1><p class="sub">Understand existing features and module relationships before proposing new work.</p></div><div class="actions"><select class="field explorer-repo-select" id="explorerRepoSelect" aria-label="Select repository"><option>shopping-cart · a83f21c</option><option>account-service · e219a7b</option><option>task-manager · 9c10d42</option></select><button class="btn primary" onclick="analyzeSelectedRepository()">↻ Analyze repository</button></div></div>
+  <div class="pagehead"><div><div class="eyebrow">PROJECT INTELLIGENCE</div><h1>Project explorer</h1><p class="sub">Inspect a project's selected component, architecture and likely regression surface.</p></div><div class="actions"><select class="field explorer-repo-select" id="explorerRepoSelect" aria-label="Select project component"><option>shopping-cart · a83f21c</option><option>account-service · e219a7b</option><option>task-manager · 9c10d42</option></select><button class="btn primary" onclick="analyzeSelectedRepository()">↻ Analyze component</button></div></div>
   <div class="repository-banner"><div><span class="pill green" id="explorerAnalysisStatus">Sample analysis · completed</span><h2 id="explorerRepoTitle">shopping-cart</h2><p id="explorerRepoSummary">A Node.js/Express shopping and order service with product catalog, cart pricing, checkout, inventory reservation, and order lifecycle modules.</p></div><div class="repo-facts"><span><b>Commit</b>a83f21c · main</span><span><b>Stack</b>JavaScript · Express</span><span><b>Tests</b>Jest · 126 sample tests</span><span><b>Analyzed</b>16 Nov 2026 · Demo</span></div></div>
   <div class="explorer-tabs" role="tablist" aria-label="Repository explorer views"><button class="explorer-tab active" data-explorer-tab="overview" onclick="setExplorerTab('overview')">Overview</button><button class="explorer-tab" data-explorer-tab="features" onclick="setExplorerTab('features')">Feature map <span>6</span></button><button class="explorer-tab" data-explorer-tab="structure" onclick="setExplorerTab('structure')">File structure</button><button class="explorer-tab" data-explorer-tab="graph" onclick="setExplorerTab('graph')">Module graph</button><button class="explorer-tab" data-explorer-tab="code" onclick="setExplorerTab('code')">Code viewer</button></div>
   <div class="explorer-panel active" data-explorer-panel="overview"><div class="notice explorer-sample-warning" id="explorerSampleWarning" hidden>Module, file-tree, and graph details below are shopping-cart demo fixtures. This selected repository is metadata-only in the prototype; a real analyzer must inspect its pinned commit before using these findings.</div><div class="grid contentgrid"><div class="card section"><div class="sectionhead"><h2>Repository overview</h2><span class="pill blue">Commit-pinned snapshot</span></div><div class="overview-metrics"><div><b>24</b><span>source files</span></div><div><b>6</b><span>feature modules</span></div><div><b>126</b><span>sample tests</span></div><div><b>4</b><span>external dependencies</span></div></div><h3 class="explorer-subhead">Architecture at a glance</h3><p class="muted">Express routes delegate to domain services. Cart pricing consumes product and promotion rules. Checkout coordinates inventory reservation and order creation; order cancellation releases reservations. Data access is isolated in repositories.</p><div class="repo-meta"><span>Entry: <code>src/app.js</code></span><span>Routes: <code>src/routes/</code></span><span>Domain: <code>src/services/</code></span></div></div><div class="card section"><div class="sectionhead"><h2>Detected conventions</h2><small>Review before generation</small></div><div class="req"><div class="reqitem"><span class="check">✓</span>Service-layer business logic</div><div class="reqitem"><span class="check">✓</span>Jest unit + integration tests</div><div class="reqitem"><span class="check">✓</span>JSON REST API with Express</div><div class="reqitem"><span class="check">✓</span>Repository/data-access boundary</div></div><div class="notice">Repository analysis is a navigation aid, not a complete or authoritative security audit. Verify findings against the pinned source.</div></div></div><div class="card section" style="margin-top:16px"><div class="sectionhead"><h2>Suggested task areas</h2><small>Derived from detected modules · sample analysis</small></div><div class="feature-cards" id="overviewFeatureCards"></div></div></div>
@@ -232,14 +332,14 @@ body{background:var(--bg);color:var(--ink);font-size:13px;letter-spacing:0}.app{
 </section>
 
 <section class="view" id="generator">
-  <div class="pagehead"><div><div class="eyebrow">TASK CREATION</div><h1>Task Generator</h1><p class="sub">Create a feature-development assignment grounded in an existing repository.</p></div><span class="pill blue">Guided generation</span></div>
+  <div class="pagehead"><div><div class="eyebrow">TASK CREATION</div><h1>Task Generator</h1><p class="sub">Create a feature-development assignment grounded in the selected project's component baselines.</p></div><span class="pill blue">Guided generation</span></div>
   <div class="grid contentgrid">
     <div class="card section">
-      <div class="sectionhead"><h2>Task configuration</h2><small>Step 1 of 3</small></div>
+      <div class="sectionhead"><h2>Task configuration</h2><small>Step 1 · project scope</small></div>
       <div class="mode-switch" role="group" aria-label="Task authoring mode"><button class="mode-button active" data-mode="automatic" type="button" onclick="setAuthoringMode('automatic')">✦ Automatic draft</button><button class="mode-button" data-mode="manual" type="button" onclick="setAuthoringMode('manual')">✎ Manual authoring</button></div>
-      <div class="notice mode-note" id="modeNote">Automatic mode proposes a draft from repository context. Review and edit every criterion before creating a reference answer.</div>
-      <label class="fieldlabel" for="taskProjectSelect">Project workspace</label><select class="field" id="taskProjectSelect"><option value="forge-commerce">Forge Commerce · 3 repositories</option><option value="account-platform">Account Platform · 2 repositories</option></select><p class="hint">The task records a baseline manifest per included repository and branch.</p>
-      <label class="fieldlabel">Source repository</label><select class="field" id="repoSelect"><option>shopping-cart · a83f21c</option><option>account-service · e219a7b</option><option>task-manager · 9c10d42</option></select>
+      <div class="notice mode-note" id="modeNote">Automatic mode proposes a draft from the selected project's context. Review and edit every criterion before creating a reference answer.</div>
+      <label class="fieldlabel" for="taskProjectSelect">Project workspace</label><select class="field" id="taskProjectSelect"><option value="">Choose a project…</option><option value="forge-commerce">Forge Commerce · 3 components</option><option value="account-platform">Account Platform · 2 components</option><option value="task-manager">Task Manager · 1 component</option></select><p class="hint">A task uses one project's pinned baseline. Select any project in the portfolio, then choose its included components.</p>
+      <label class="fieldlabel" for="repoSelect">Primary project component</label><select class="field" id="repoSelect"><option>shopping-cart · a83f21c</option><option>account-service · e219a7b</option><option>task-manager · 9c10d42</option></select>
       <div style="height:14px"></div><label class="fieldlabel">Task generation approach</label><select class="field" id="approach"><option>Generate a new feature from codebase context</option><option>Generate from a supplied product requirement</option><option>Convert an existing issue into a task</option></select>
       <div style="height:14px"></div><label class="fieldlabel">Feature area</label><select class="field" id="featureArea"><option>Cart and checkout</option><option>Authentication and authorization</option><option>Inventory management</option><option>Notifications</option><option>Reporting and analytics</option></select>
       <div style="height:14px"></div><label class="fieldlabel">Difficulty</label><select class="field" id="difficulty"><option>Medium</option><option>Easy</option><option>Hard</option></select>
@@ -255,55 +355,57 @@ body{background:var(--bg);color:var(--ink);font-size:13px;letter-spacing:0}.app{
         <div class="reqitem"><span class="check">✓</span><div><strong>Version pinned</strong><br><span class="muted">Record branch and immutable commit SHA.</span></div></div>
         <div class="reqitem"><span class="check">✓</span><div><strong>Independent verification</strong><br><span class="muted">Avoid relying only on tests written by the solution generator.</span></div></div>
       </div>
-      <div class="notice">A production pipeline should reject ambiguous, conflicting or untestable requirements before generating code.</div>
+      <div class="notice">Choose included components in the selected project's workspace. A production pipeline should reject ambiguous, conflicting or untestable requirements before generating code.</div>
     </div>
   </div>
   <div class="card section" id="generatedPreview" style="margin-top:17px">
     <div class="sectionhead"><h2>Generated task preview</h2><span class="pill gray" id="genStatus">Waiting for generation</span></div>
     <div class="empty" id="genEmpty">Configure the task and select <strong>Generate task package</strong> to preview the result.</div>
     <div id="genResult" style="display:none">
-      <div class="two"><div><div class="eyebrow">TASK-025 · FEATURE DEVELOPMENT</div><h2 id="generatedTitle">Discount coupon eligibility</h2><p class="muted" id="generatedDesc">Add coupon application with eligibility rules and clear failure responses.</p><p><span class="pill blue" id="generatedDifficulty">Medium</span> <span class="pill gray">Node.js · Express</span></p></div><div><label class="fieldlabel">Starting repository version</label><div class="code">shopping-cart @ a83f21c<br>branch: main<br>framework: Express</div></div></div>
+      <div class="two"><div>      <div class="eyebrow">TASK-025 · FEATURE DEVELOPMENT</div><h2 id="generatedTitle">Discount coupon eligibility</h2><p class="muted" id="generatedDesc">Add coupon application with eligibility rules and clear failure responses.</p><p><span class="pill blue" id="generatedDifficulty">Medium</span> <span class="pill gray" id="generatedStack">Selected stack</span></p></div><div><label class="fieldlabel">Primary component baseline</label><div class="code">shopping-cart @ a83f21c<br>branch: main<br>framework: Express</div><label class="fieldlabel" style="margin-top:12px">Included project components</label><div class="repo-meta" id="generatedManifest">Selected components appear here after generation.</div></div></div>
       <div class="divider"></div><h3 style="font-size:13px">Acceptance criteria</h3><div class="req" id="generatedReq"></div>
-      <div style="display:flex;justify-content:flex-end;margin-top:15px;gap:8px"><button class="btn" onclick="navigate('validation')">Open validation lab</button><button class="btn primary" onclick="toast('Demo package prepared. Connect a backend to export a real Harbor task.')">Prepare task package →</button></div>
+      <div style="display:flex;justify-content:flex-end;margin-top:15px;gap:8px"><button class="btn" onclick="navigate('quality')">Review quality checks</button><button class="btn primary" onclick="toast('Demo package prepared. Connect a backend to export a real Harbor task.')">Prepare task package →</button></div>
     </div>
   </div>
 </section>
 
 <section class="view" id="solution">
-  <div class="pagehead"><div><div class="eyebrow">REFERENCE ANSWER WORKBENCH</div><h1>Solution & tests</h1><p class="sub">Generate a reference patch and tests from the approved task version, then inspect and validate both.</p></div><span class="pill amber">Task spec must be approved first</span></div>
+  <div class="pagehead"><div><div class="eyebrow">REFERENCE ANSWER WORKBENCH</div><h1>Solution & tests</h1><p class="sub">Generate a reference patch and independent tests, then review the quality evidence for this task version.</p></div><div class="actions"><span class="pill amber">Task spec must be approved first</span><button class="btn" onclick="navigate('quality')">Review quality checks →</button></div></div>
+  <div class="card section solution-task-context"><div><label class="fieldlabel" for="solutionTaskSelect">Task package · all projects</label><select class="field" id="solutionTaskSelect"><option value="TASK-024" data-project="forge-commerce">TASK-024 · Inventory reservation · Forge Commerce</option><option value="TASK-023" data-project="forge-commerce">TASK-023 · Coupon eligibility · Forge Commerce</option><option value="TASK-022" data-project="account-platform">TASK-022 · Login rate limiting · Account Platform</option><option value="TASK-021" data-project="task-manager">TASK-021 · Task due-date reminders · Task Manager</option></select></div><div><span class="fieldlabel">Selected project baseline</span><strong id="solutionProjectBaseline">Forge Commerce · shopping-cart @ a83f21c</strong></div><span class="pill gray">Example artifacts · demo</span><p class="hint">Selecting a package loads its matching illustrative patch and tests. No source code or tests are run in this prototype.</p></div>
   <div class="notice"><strong>Keep the oracle independent.</strong> The solution generator and test generator should not share hidden expected-answer logic. Tests are derived from reviewed criteria/examples, then validated against both correct and intentionally broken implementations.</div>
-  <div class="grid contentgrid"><div class="card section"><div class="sectionhead"><h2>Reference implementation</h2><span class="pill blue">Task TASK-024 · v1.3.0</span></div><label class="fieldlabel">Implementation strategy</label><select class="field" id="solutionStrategy"><option>Generate reference patch from approved requirements</option><option>Import a reviewer-authored patch</option><option>Use selected agent submission as candidate (not ground truth)</option></select><div class="divider"></div><div class="solution-preview"><div class="file-tree"><b>Reference patch</b><span>src/inventory/reservations.js</span><span>src/orders/cancel.js</span><span>tests/reservations.test.js</span><small>3 files changed · +48 −7</small></div><div><div class="code">+ export async function reserveStock(itemId, quantity) {<br>+   if (!Number.isInteger(quantity) || quantity &lt;= 0) {<br>+     throw new ValidationError('Quantity must be positive');<br>+   }<br>+   return inventory.withLock(itemId, async stock =&gt; {<br>+     if (stock.available &lt; quantity) throw new OutOfStockError();<br>+     stock.available -= quantity;<br>+     stock.reserved += quantity;<br>+   });<br>+ }</div><p class="hint">Illustrative diff only. Generated code is not trusted until reviewed and tests pass.</p></div></div><div class="solution-actions"><button class="btn" onclick="toast('Patch editor opens in a connected repository workspace.')">Edit patch</button><button class="btn primary" onclick="generateArtifacts()">✦ Generate solution + tests</button></div></div>
-    <div class="card section"><div class="sectionhead"><h2>Test plan</h2><span class="pill green">Criteria mapped</span></div><div class="test-case-list"><div class="test-case"><b>TC-01 · reserves available stock</b><span>Given sufficient inventory, requested units are reserved.</span><small>Feature · criterion 1</small></div><div class="test-case"><b>TC-02 · rejects oversell</b><span>When requested quantity exceeds availability, reject without changing stock.</span><small>Boundary · criterion 2</small></div><div class="test-case"><b>TC-03 · releases on cancellation</b><span>Cancellation restores reserved units exactly once.</span><small>Feature · criterion 3</small></div><div class="test-case"><b>TC-04 · concurrent reservations</b><span>Parallel requests cannot reserve beyond available stock.</span><small>Concurrency · criterion 4</small></div></div><button class="btn" style="margin-top:12px" onclick="toast('Test case editor is available after task approval.')">＋ Add manual test case</button></div></div>
-  <div class="card section" style="margin-top:16px"><div class="sectionhead"><h2>Generated test script</h2><div class="actions"><span class="pill gray">tests/reservations.test.js</span><button class="btn" onclick="toast('Test script copied in the connected product version.')">Copy script</button></div></div><div class="code" id="testScriptPreview">describe('inventory reservations', () =&gt; {<br>  it('rejects a reservation larger than available stock', async () =&gt; {<br>    await expect(reserveStock('sku-1', 6)).rejects.toThrow(OutOfStockError);<br>    expect(await getAvailable('sku-1')).toBe(5); // no partial mutation<br>  });<br><br>  it('serializes competing reservations', async () =&gt; {<br>    const results = await Promise.allSettled([reserveStock('sku-1', 4), reserveStock('sku-1', 4)]);<br>    expect(results.filter(result =&gt; result.status === 'fulfilled')).toHaveLength(1);<br>  });<br>});</div><div class="notice">Generated scripts are draft artifacts. The reviewer can edit them, but changes create a new test-suite version and require rerunning all agent submissions for fair comparison.</div></div>
+  <div class="grid contentgrid"><div class="card section"><div class="sectionhead"><h2>Reference implementation</h2><span class="pill blue" id="solutionTaskVersion">Task TASK-024 · v1.3.0</span></div><label class="fieldlabel">Implementation strategy</label><select class="field" id="solutionStrategy"><option>Generate reference patch from approved requirements</option><option>Import a reviewer-authored patch</option><option>Use selected agent submission as candidate (not ground truth)</option></select><div class="divider"></div><div class="solution-preview"><div class="file-tree"><b>Reference patch</b><div id="referencePatchFiles"><span>src/inventory/reservations.js</span><span>src/orders/cancel.js</span><span>tests/reservations.test.js</span></div><small id="referencePatchStats">3 files changed · +48 −7</small></div><div><div class="code" id="referencePatchPreview">+ export async function reserveStock(itemId, quantity) {<br>+   if (!Number.isInteger(quantity) || quantity &lt;= 0) {<br>+     throw new ValidationError('Quantity must be positive');<br>+   }<br>+   return inventory.withLock(itemId, async stock =&gt; {<br>+     if (stock.available &lt; quantity) throw new OutOfStockError();<br>+     stock.available -= quantity;<br>+     stock.reserved += quantity;<br>+   });<br>+ }</div><p class="hint">Illustrative diff only. Generated code is not trusted until reviewed and tests pass.</p></div></div><div class="solution-actions"><button class="btn" onclick="toast('Patch editor opens in a connected repository workspace.')">Edit patch</button><button class="btn primary" onclick="generateArtifacts()">✦ Generate solution + tests</button></div></div>
+    <div class="card section"><div class="sectionhead"><h2>Test plan</h2><span class="pill green">Criteria mapped</span></div><div class="test-case-list" id="solutionTestCases"><div class="test-case"><b>TC-01 · reserves available stock</b><span>Given sufficient inventory, requested units are reserved.</span><small>Feature · criterion 1</small></div><div class="test-case"><b>TC-02 · rejects oversell</b><span>When requested quantity exceeds availability, reject without changing stock.</span><small>Boundary · criterion 2</small></div><div class="test-case"><b>TC-03 · releases on cancellation</b><span>Cancellation restores reserved units exactly once.</span><small>Feature · criterion 3</small></div><div class="test-case"><b>TC-04 · concurrent reservations</b><span>Parallel requests cannot reserve beyond available stock.</span><small>Concurrency · criterion 4</small></div></div><button class="btn" style="margin-top:12px" onclick="toast('Test case editor is available after task approval.')">＋ Add manual test case</button></div></div>
+  <div class="card section" style="margin-top:16px"><div class="sectionhead"><h2>Generated test script</h2><div class="actions"><span class="pill gray" id="solutionTestFile">tests/reservations.test.js</span><button class="btn" onclick="toast('Test script copied in the connected product version.')">Copy script</button></div></div><div class="code" id="testScriptPreview">describe('inventory reservations', () =&gt; {<br>  it('rejects a reservation larger than available stock', async () =&gt; {<br>    await expect(reserveStock('sku-1', 6)).rejects.toThrow(OutOfStockError);<br>    expect(await getAvailable('sku-1')).toBe(5); // no partial mutation<br>  });<br><br>  it('serializes competing reservations', async () =&gt; {<br>    const results = await Promise.allSettled([reserveStock('sku-1', 4), reserveStock('sku-1', 4)]);<br>    expect(results.filter(result =&gt; result.status === 'fulfilled')).toHaveLength(1);<br>  });<br>});</div><div class="notice">Generated scripts are draft artifacts. The reviewer can edit them, but changes create a new test-suite version and require rerunning all agent submissions for fair comparison.</div></div>
 </section>
 
 <section class="view" id="tasks">
-  <div class="pagehead"><div><div class="eyebrow">BENCHMARK LIBRARY</div><h1>Task Packages</h1><p class="sub">Browse generated assignments, reference patches, tests and pinned repository versions.</p></div><button class="btn primary" onclick="navigate('generator')">＋ New task</button></div>
-  <div class="card section"><div class="sectionhead"><h2>All task packages</h2><span class="pill gray">4 packages</span></div><table class="table"><thead><tr><th>Task</th><th>Repository</th><th>Difficulty</th><th>Version</th><th>Validation</th></tr></thead><tbody>
-  <tr><td><strong>TASK-024 · Inventory reservation</strong><br><span class="muted">Concurrency and stock management</span></td><td>shopping-cart</td><td>Hard</td><td><code>a83f21c</code></td><td><span class="pill green">Validated</span></td></tr>
-  <tr><td><strong>TASK-023 · Coupon eligibility</strong><br><span class="muted">Business rules and calculations</span></td><td>shopping-cart</td><td>Medium</td><td><code>a83f21c</code></td><td><span class="pill green">Validated</span></td></tr>
-  <tr><td><strong>TASK-022 · Login rate limiting</strong><br><span class="muted">Authentication and security</span></td><td>account-service</td><td>Hard</td><td><code>e219a7b</code></td><td><span class="pill amber">Review</span></td></tr>
-  <tr><td><strong>TASK-021 · Task due-date reminders</strong><br><span class="muted">Scheduling and notifications</span></td><td>task-manager</td><td>Medium</td><td><code>9c10d42</code></td><td><span class="pill green">Validated</span></td></tr>
+  <div class="pagehead"><div><div class="eyebrow">BENCHMARK LIBRARY</div><h1>Task Packages</h1><p class="sub">Browse tasks with their project scope, immutable baselines, artifacts and quality state.</p></div><button class="btn primary" onclick="navigate('generator')">＋ New task</button></div>
+  <div class="card section"><div class="sectionhead"><h2>All task packages</h2><span class="pill gray">Across all projects · example packages</span></div><table class="table"><thead><tr><th>Task</th><th>Project / component</th><th>Difficulty</th><th>Baseline</th><th>Quality state</th></tr></thead><tbody>
+  <tr data-project="forge-commerce"><td><strong>TASK-024 · Inventory reservation</strong><br><span class="muted">Concurrency and stock management</span></td><td>Forge Commerce · Commerce API</td><td>Hard</td><td><code>a83f21c</code></td><td><span class="pill gray">Validated · demo</span></td></tr>
+  <tr data-project="forge-commerce"><td><strong>TASK-023 · Coupon eligibility</strong><br><span class="muted">Business rules and calculations</span></td><td>Forge Commerce · Commerce API</td><td>Medium</td><td><code>a83f21c</code></td><td><span class="pill gray">Validated · demo</span></td></tr>
+  <tr data-project="account-platform"><td><strong>TASK-022 · Login rate limiting</strong><br><span class="muted">Authentication and security</span></td><td>Account Platform · Account API</td><td>Hard</td><td><code>e219a7b</code></td><td><span class="pill gray">Needs review · demo</span></td></tr>
+  <tr data-project="task-manager"><td><strong>TASK-021 · Task due-date reminders</strong><br><span class="muted">Scheduling and notifications</span></td><td>Task Manager · Tasks API</td><td>Medium</td><td><code>9c10d42</code></td><td><span class="pill gray">Validated · demo</span></td></tr>
   </tbody></table></div>
   <div class="grid lower"><div class="card section"><h2 style="font-size:15px">Package contents</h2><div class="req" style="margin-top:14px"><div class="reqitem">📄 Task instructions and acceptance criteria</div><div class="reqitem">🧩 Reference implementation patch</div><div class="reqitem">🧪 Feature tests and regression tests</div><div class="reqitem">🐳 Environment setup and execution commands</div><div class="reqitem">🔖 Repository commit and metadata</div><div class="reqitem">📊 Validation report</div></div></div><div class="card section"><h2 style="font-size:15px">Harbor compatibility</h2><p class="muted">The package exporter maps generated task data into the task format required by the supplied Harbor interface.</p><div class="code">task-package/<br>├── instruction.md<br>├── task.toml<br>├── environment/<br>├── solution/ reference.patch<br>├── tests/<br>└── validation-report.json</div><div class="hint">Illustrative package layout. Confirm exact filenames and schema against your Harbor version.</div></div></div>
 </section>
 
-<section class="view" id="validation">
-  <div class="pagehead"><div><div class="eyebrow">QUALITY ASSURANCE</div><h1>Validation Lab</h1><p class="sub">Verify the reference answer key and prove that generated tests catch defects.</p></div><span class="pill green">Sample run passed</span></div>
+<section class="view" id="quality">
+  <div class="pagehead"><div><div class="eyebrow">TASK QUALITY</div><h1>Quality checks</h1><p class="sub">A task is ready only when its reference, tests, baseline and evidence have been reviewed.</p></div><div class="actions"><span class="pill amber">Sample evidence · not a real run</span><button class="btn" onclick="navigate('solution')">← Back to solution & tests</button></div></div>
+  <div class="notice">Quality checks are essential to a trustworthy benchmark, but they belong in the task workflow—not as a separate main workspace. These example results are simulated and do not prove that code or tests ran.</div>
   <div class="grid stats">
-    <div class="card stat"><div class="stathead">Build status</div><div class="statnum" style="font-size:21px;color:var(--green)">Passed</div><div class="trend">Reference patch compiles</div></div>
-    <div class="card stat"><div class="stathead">Feature tests</div><div class="statnum">18/18</div><div class="trend">All expected behaviours pass</div></div>
-    <div class="card stat"><div class="stathead">Regression tests</div><div class="statnum">42/42</div><div class="trend">Existing behaviour preserved</div></div>
-    <div class="card stat"><div class="stathead">Mutation score</div><div class="statnum">90%</div><div class="trend">18 of 20 mutants detected</div></div>
+    <div class="card stat"><div class="stathead">Build · sample</div><div class="statnum" style="font-size:21px">Pass*</div><div class="trend">Illustrative fixture only</div></div>
+    <div class="card stat"><div class="stathead">Feature tests · sample</div><div class="statnum">18/18*</div><div class="trend">Not executed by this prototype</div></div>
+    <div class="card stat"><div class="stathead">Regression · sample</div><div class="statnum">42/42*</div><div class="trend">Not executed by this prototype</div></div>
+    <div class="card stat"><div class="stathead">Mutation score · sample</div><div class="statnum">90%*</div><div class="trend">Illustrative fixture only</div></div>
   </div>
   <div class="grid contentgrid">
-    <div class="card section"><div class="sectionhead"><h2>Verification checks</h2><button class="btn primary" onclick="runValidation()">▶ Run validation</button></div><table class="table"><tbody>
-      <tr><td><strong>1. Requirement consistency</strong><br><span class="muted">No conflicting acceptance criteria</span></td><td><span class="pill green">Passed</span></td></tr>
-      <tr><td><strong>2. Reference implementation build</strong><br><span class="muted">Project builds in pinned environment</span></td><td><span class="pill green">Passed</span></td></tr>
-      <tr><td><strong>3. Independent expected outputs</strong><br><span class="muted">Boundary cases match specification</span></td><td><span class="pill green">Passed</span></td></tr>
-      <tr><td><strong>4. Feature test suite</strong><br><span class="muted">New feature behaviour is correct</span></td><td><span class="pill green">Passed</span></td></tr>
-      <tr><td><strong>5. Mutation testing</strong><br><span class="muted">Deliberately introduced defects detected</span></td><td><span class="pill amber">18/20 killed</span></td></tr>
-      <tr><td><strong>6. Regression suite</strong><br><span class="muted">Existing functionality remains intact</span></td><td><span class="pill green">Passed</span></td></tr>
+    <div class="card section"><div class="sectionhead"><h2>Required checks</h2><button class="btn primary" onclick="runValidation(this)">▶ Run checks</button></div><table class="table"><tbody>
+      <tr><td><strong>1. Requirement consistency</strong><br><span class="muted">No conflicting acceptance criteria</span></td><td><span class="pill gray">Sample pass*</span></td></tr>
+      <tr><td><strong>2. Reference implementation build</strong><br><span class="muted">Project builds in pinned environment</span></td><td><span class="pill gray">Sample pass*</span></td></tr>
+      <tr><td><strong>3. Independent expected outputs</strong><br><span class="muted">Boundary cases match specification</span></td><td><span class="pill gray">Sample pass*</span></td></tr>
+      <tr><td><strong>4. Feature test suite</strong><br><span class="muted">New feature behaviour is correct</span></td><td><span class="pill gray">Sample pass*</span></td></tr>
+      <tr><td><strong>5. Mutation testing</strong><br><span class="muted">Deliberately introduced defects detected</span></td><td><span class="pill gray">18/20 sample*</span></td></tr>
+      <tr><td><strong>6. Regression suite</strong><br><span class="muted">Existing functionality remains intact</span></td><td><span class="pill gray">Sample pass*</span></td></tr>
     </tbody></table><div class="notice">A passing reference solution is necessary but not sufficient. Independent expected outputs and mutation testing help reveal tests that merely agree with a faulty answer key.</div></div>
     <div class="card section"><div class="sectionhead"><h2>Mutation test results</h2><span class="pill blue">20 mutants</span></div><div style="font-size:28px;font-weight:780">90% <span class="muted" style="font-size:12px;font-weight:500">mutation score</span></div><div class="progress" style="height:9px"><span style="width:90%"></span></div><div class="repo-meta" style="justify-content:space-between"><span>18 killed</span><span>2 survived</span></div><div class="divider"></div><div class="activity">
       <div class="activityitem"><div class="activityicon" style="color:var(--green)">✓</div><div><strong>Discount changed from 10% to 20%</strong><small>Detected by calculation test</small></div></div>
@@ -311,16 +413,17 @@ body{background:var(--bg);color:var(--ink);font-size:13px;letter-spacing:0}.app{
       <div class="activityitem"><div class="activityicon" style="color:var(--amber)">!</div><div><strong>Two equivalent or surviving mutants</strong><small>Require inspection and test improvement</small></div></div>
     </div></div>
   </div>
-  <div class="card section" style="margin-top:16px"><div class="sectionhead"><h2>Choose validation mode</h2><span class="pill blue">Same versioned suite</span></div><div class="test-mode-grid"><div><b>Automated suite</b><p class="muted">Run build, unit/integration, regression, and browser checks with deterministic fixtures.</p><button class="btn primary" onclick="runValidation()">▶ Run automated suite</button></div><div><b>Manual test session</b><p class="muted">Use a reviewer checklist for exploratory behavior not covered by automation; attach notes and evidence to the exact package version.</p><button class="btn" onclick="startManualTest()">Start manual test session</button></div></div><div class="test-suite-lock"><label><input id="suiteLockValidation" type="checkbox" checked> Freeze test suite for all agents in this comparison</label><span class="hint">Editing tests creates a new suite version and invalidates direct score comparisons with earlier versions.</span></div></div>
+  <div class="card section" style="margin-top:16px"><div class="sectionhead"><h2>Review options</h2><span class="pill blue">Same versioned suite</span></div><div class="test-mode-grid"><div><b>Automated suite</b><p class="muted">Run build, unit/integration, regression, and browser checks with deterministic fixtures.</p><button class="btn primary" onclick="runValidation(this)">▶ Run automated suite</button></div><div><b>Manual review</b><p class="muted">Use a reviewer checklist for exploratory behavior not covered by automation; attach notes and evidence to the exact package version.</p><button class="btn" onclick="startManualTest()">Start manual review</button></div></div><div class="test-suite-lock"><label><input id="suiteLockValidation" type="checkbox" checked> Freeze test suite for all agents in this comparison</label><span class="hint">Editing tests creates a new suite version and invalidates direct score comparisons with earlier versions.</span></div></div>
 </section>
 
 <section class="view" id="evaluation">
   <div class="pagehead"><div><div class="eyebrow">AGENT BENCHMARKING</div><h1>Agent Evaluation</h1><p class="sub">Compare coding agents against the same task, environment and hidden test suite.</p></div><button class="btn primary" onclick="toast('Evaluation run queued in demo mode.')">▶ Run evaluation</button></div>
-  <div class="card section"><div class="sectionhead"><h2>Evaluation configuration</h2><span class="pill blue">Example run</span></div><div class="two"><div><label class="fieldlabel">Task package</label><select class="field"><option>TASK-024 · Inventory reservation</option><option>TASK-023 · Coupon eligibility</option></select></div><div><label class="fieldlabel">Execution environment</label><select class="field"><option>Harbor isolated container</option><option>Local Docker runner</option></select></div></div><div class="notice">In a production implementation, connect each agent through its supported adapter. Give every agent the same base commit and task instructions; keep evaluation tests hidden from the agent.</div></div>
+  <div class="card section"><div class="sectionhead"><h2>Evaluation configuration</h2><span class="pill blue">Example run</span></div><div class="two"><div><label class="fieldlabel" for="evaluationTaskSelect">Task package · all projects</label><select class="field" id="evaluationTaskSelect"><option value="TASK-024" data-project="forge-commerce">TASK-024 · Inventory reservation · Forge Commerce</option><option value="TASK-023" data-project="forge-commerce">TASK-023 · Coupon eligibility · Forge Commerce</option><option value="TASK-022" data-project="account-platform">TASK-022 · Login rate limiting · Account Platform</option><option value="TASK-021" data-project="task-manager">TASK-021 · Task due-date reminders · Task Manager</option></select></div><div><label class="fieldlabel">Execution environment</label><select class="field"><option>Harbor isolated container</option><option>Local Docker runner</option></select></div></div><div class="notice">Choose any project’s task package to compare agents against the same pinned baseline, instructions and hidden test suite. In a production implementation, connect each agent through its supported adapter.</div></div>
   <div class="card section" style="margin-top:17px"><div class="sectionhead"><h2>Agent results</h2><small>Illustrative benchmark data</small></div><table class="table"><thead><tr><th>Agent</th><th>Feature tests</th><th>Regression</th><th>Build</th><th>Overall</th></tr></thead><tbody>
-    <tr><td><strong>Agent Alpha</strong></td><td>18/20</td><td>42/42</td><td><span class="pill green">Pass</span></td><td><strong>92%</strong></td></tr>
-    <tr><td><strong>Agent Beta</strong></td><td>16/20</td><td>40/42</td><td><span class="pill green">Pass</span></td><td><strong>86%</strong></td></tr>
-    <tr><td><strong>Agent Gamma</strong></td><td>15/20</td><td>39/42</td><td><span class="pill green">Pass</span></td><td><strong>79%</strong></td></tr>
+    <tr data-project="forge-commerce"><td><strong>Agent Alpha</strong></td><td>18/20</td><td>42/42</td><td><span class="pill green">Pass</span></td><td><strong>92%</strong></td></tr>
+    <tr data-project="forge-commerce"><td><strong>Agent Beta</strong></td><td>16/20</td><td>40/42</td><td><span class="pill green">Pass</span></td><td><strong>86%</strong></td></tr>
+    <tr data-project="account-platform"><td><strong>Agent Gamma</strong></td><td>15/20</td><td>39/42</td><td><span class="pill green">Pass</span></td><td><strong>79%</strong></td></tr>
+    <tr data-project="task-manager"><td><strong>Agent Delta</strong></td><td>17/20</td><td>41/42</td><td><span class="pill green">Pass</span></td><td><strong>88%</strong></td></tr>
   </tbody></table><div class="hint">Scores are illustrative. A real scoring policy should define test weights, flaky-test handling, timeouts and partial-credit rules.</div></div>
   <div class="card section" style="margin-top:17px"><h2 style="font-size:15px">What makes the comparison fair?</h2><div class="req" style="margin-top:12px"><div class="reqitem"><span class="check">✓</span>Same task instructions and base commit</div><div class="reqitem"><span class="check">✓</span>Same dependencies, environment and resource limits</div><div class="reqitem"><span class="check">✓</span>Same hidden feature and regression tests</div><div class="reqitem"><span class="check">✓</span>Consistent timeout and retry policy</div><div class="reqitem"><span class="check">✓</span>Reproducible logs and score calculation</div></div></div>
 </section>
@@ -383,7 +486,7 @@ body{background:var(--bg);color:var(--ink);font-size:13px;letter-spacing:0}.app{
 </div>
 <div class="toast" id="toast"></div>
 <script>
-const labels={overview:"Overview",repositories:"Repositories",generator:"Task Generator",tasks:"Task Packages",validation:"Validation Lab",evaluation:"Agent Evaluation",settings:"Settings"};
+const labels={overview:"Overview",projects:"Projects",explorer:"Project explorer",generator:"Task Generator",solution:"Solution & tests",tasks:"Task Packages",quality:"Quality checks",evaluation:"Agent evaluation",settings:"Settings"};
 function navigate(view){document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id===view));document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset.view===view));document.getElementById('crumb').textContent=labels[view]||view;window.scrollTo({top:0,behavior:'smooth'});}
 document.querySelectorAll('.nav button').forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.view)));
 let toastTimer;function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),3000)}
@@ -394,20 +497,25 @@ function runValidation(){toast('Demo validation run started...');setTimeout(()=>
 <script>
 /* Local prototype interactions: no backend or remote repository access is implied. */
 const repoCatalog={
+  'forge-commerce-web · f31bc92':{name:'forge-commerce-web',sha:'f31bc92',branch:'main',stack:'React · TypeScript',url:'https://github.com/example/forge-commerce-web'},
   'shopping-cart · a83f21c':{name:'shopping-cart',sha:'a83f21c',branch:'main',stack:'Node.js · Express',url:'https://github.com/example/shopping-cart'},
+  'forge-commerce-data · c91a204':{name:'forge-commerce-data',sha:'c91a204',branch:'release/2026-q4',stack:'Python · Airflow · dbt',url:'https://github.com/example/forge-commerce-data'},
+  'account-web · b812e01':{name:'account-web',sha:'b812e01',branch:'main',stack:'React · TypeScript',url:'https://github.com/example/account-web'},
   'account-service · e219a7b':{name:'account-service',sha:'e219a7b',branch:'main',stack:'Python · FastAPI',url:'https://github.com/example/account-service'},
   'task-manager · 9c10d42':{name:'task-manager',sha:'9c10d42',branch:'develop',stack:'Java · Spring',url:'https://github.com/example/task-manager'}
 };
 let activeDraft=null;
+let activeProjectWorkspaceKey=null;
 function safeText(value){return String(value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]))}
 function setupAppControls(){
   const topRight=document.querySelector('.topright');
-  if(topRight){topRight.insertAdjacentHTML('afterbegin','<label class="repo-search"><input id="globalSearch" type="search" placeholder="Search tasks or repositories" aria-label="Search tasks or repositories"></label>');topRight.insertAdjacentHTML('beforeend','<button class="iconbtn" id="helpButton" type="button" aria-label="About this demo" title="About this demo">?</button>');}
+  if(topRight){topRight.insertAdjacentHTML('afterbegin','<label class="repo-search"><input id="globalSearch" type="search" placeholder="Search tasks or components" aria-label="Search tasks or project components"></label>');topRight.insertAdjacentHTML('beforeend','<button class="iconbtn" id="helpButton" type="button" aria-label="About this demo" title="About this demo">?</button>');}
   const taskCard=document.querySelector('#tasks .card.section');
   if(taskCard){const heading=taskCard.querySelector('.sectionhead');heading.insertAdjacentHTML('afterend','<div class="filterbar"><input class="field" id="taskSearch" type="search" placeholder="Filter task packages" aria-label="Filter task packages"><select class="field" id="taskStatusFilter" aria-label="Filter by validation status"><option value="all">All validation states</option><option value="validated">Validated</option><option value="review">Needs review</option><option value="draft">Draft</option></select><span class="hint" id="taskCount" aria-live="polite"></span></div>');}
   const previewActions=document.querySelector('#genResult > div:last-child');
   if(previewActions){previewActions.insertAdjacentHTML('beforeend','<button class="btn" id="exportDraftButton" type="button" onclick="exportDraft()">↓ Export JSON</button>');}
   const toastNode=document.getElementById('toast');toastNode.setAttribute('role','status');toastNode.setAttribute('aria-live','polite');
+  document.querySelectorAll('.nav button').forEach(button=>{const label=button.querySelector('.navtext')?.textContent.trim();if(label){button.setAttribute('aria-label',label);button.title=label}});
   document.getElementById('globalSearch')?.addEventListener('input',event=>filterGlobal(event.target.value));
   document.getElementById('taskSearch')?.addEventListener('input',filterTasks);
   document.getElementById('taskStatusFilter')?.addEventListener('change',filterTasks);
@@ -417,14 +525,15 @@ function setupAppControls(){
 }
 function filterGlobal(query){
   const term=query.trim().toLowerCase();
-  document.querySelectorAll('#tasks tbody tr, #repositories tbody tr').forEach(row=>{row.hidden=Boolean(term)&&!row.textContent.toLowerCase().includes(term)});
-  if(term){const page=document.querySelector('.view.active');if(page?.id!=='tasks'&&page?.id!=='repositories'){navigate('tasks');const taskSearch=document.getElementById('taskSearch');if(taskSearch)taskSearch.value=query;filterTasks()}}
+  document.querySelectorAll('#tasks tbody tr, #projectReposBody tr').forEach(row=>{row.hidden=Boolean(term)&&!row.textContent.toLowerCase().includes(term)});
+  if(term){const page=document.querySelector('.view.active');if(page?.id!=='tasks'&&page?.id!=='projects'){navigate('tasks');const taskSearch=document.getElementById('taskSearch');if(taskSearch)taskSearch.value=query;filterTasks()}}
 }
 function filterTasks(){
   const term=(document.getElementById('taskSearch')?.value||'').trim().toLowerCase();
   const status=document.getElementById('taskStatusFilter')?.value||'all';
+  const project=document.getElementById('globalProjectSelect')?.value||'all-projects';
   const rows=[...document.querySelectorAll('#tasks tbody tr')];let visible=0;
-  rows.forEach(row=>{const text=row.textContent.toLowerCase();const isDraft=text.includes('draft');const isReview=text.includes('review');const statusMatch=status==='all'||(status==='draft'&&isDraft)||(status==='review'&&isReview)||(status==='validated'&&!isDraft&&!isReview);const matches=(!term||text.includes(term))&&statusMatch;row.hidden=!matches;if(matches)visible++});
+  rows.forEach(row=>{const text=row.textContent.toLowerCase();const isDraft=text.includes('draft');const isReview=text.includes('review');const statusMatch=status==='all'||(status==='draft'&&isDraft)||(status==='review'&&isReview)||(status==='validated'&&!isDraft&&!isReview);const projectMatch=project==='all-projects'||row.dataset.project===project;const matches=(!term||text.includes(term))&&statusMatch&&projectMatch;row.hidden=!matches;if(matches)visible++});
   const count=document.getElementById('taskCount');if(count)count.textContent=`${visible} of ${rows.length} packages`;
 }
 function selectedRepository(){const select=document.getElementById('repoSelect');return repoCatalog[select?.value]||repoCatalog['shopping-cart · a83f21c']}
@@ -436,6 +545,8 @@ function generateTask(){
     'Inventory management':['Inventory reservation','Reserve stock safely during checkout and release it when orders are cancelled.',['Reject orders when requested quantity exceeds available stock.','Reserve inventory as part of the order workflow.','Release reserved stock when an order is cancelled.','Prevent concurrent orders from overselling inventory.']],
     'Authentication and authorization':['Login attempt rate limiting','Protect login endpoints against repeated failed authentication attempts.',['Track failed login attempts per account or client.','Temporarily block attempts after the configured threshold.','Reset or expire the restriction according to policy.','Do not break successful login or existing authentication flows.']],
     'Notifications':['Scheduled order notifications','Allow order updates to be scheduled and delivered at the intended time.',['Allow a notification to be scheduled for a future time.','Reject invalid scheduling times.','Deliver eligible notifications once.','Preserve existing immediate notification behaviour.']],
+    'Account notifications':['Account security notifications','Notify users when important security events affect their account.',['Send a notification after a configured security event.','Do not expose sensitive account details in the notification.','Avoid duplicate notifications for the same event.','Preserve existing sign-in and recovery behaviour.']],
+    'Task reminders and scheduling':['Task due-date reminders','Schedule and deliver a reminder before a task reaches its due date.',['Allow a reminder to be scheduled for a valid future due date.','Reject invalid or past reminder times.','Deliver each eligible reminder only once.','Preserve existing task status and due-date behaviour.']],
     'Reporting and analytics':['Task completion reporting','Provide a reliable summary of completed work over a selected time range.',['Allow a report to be filtered by a valid date range.','Include accurate totals grouped by status.','Return an empty but valid report when no records match.','Preserve existing task and reporting behaviour.']]
   };
   let [title,description,criteria]=templates[area]||templates['Cart and checkout'];
@@ -444,6 +555,7 @@ function generateTask(){
   activeDraft={id:`TASK-${String(Date.now()).slice(-6)}`,title,description,difficulty,area,approach,repository:repo,criteria,context,createdAt:new Date().toISOString(),status:'Draft'};
   document.getElementById('generatedTitle').textContent=title;document.getElementById('generatedDesc').textContent=description;
   document.getElementById('generatedDifficulty').textContent=difficulty;
+  document.getElementById('generatedStack').textContent=repo.stack;
   document.querySelector('#genResult .eyebrow').textContent=`${activeDraft.id} · FEATURE DEVELOPMENT`;
   document.querySelector('#genResult .code').innerHTML=`${safeText(repo.name)} @ ${safeText(repo.sha)}<br>branch: ${safeText(repo.branch)}<br>framework: ${safeText(repo.stack)}`;
   document.getElementById('generatedReq').replaceChildren(...criteria.map(item=>{const node=document.createElement('div');node.className='reqitem';const mark=document.createElement('span');mark.className='check';mark.textContent='✓';node.append(mark,document.createTextNode(item));return node}));
@@ -460,12 +572,12 @@ function saveGeneratedTask(){
 }
 function renderDraftRows(){
   const saved=JSON.parse(localStorage.getItem('forgebenchDrafts')||'[]');const tbody=document.querySelector('#tasks tbody');
-  saved.forEach(task=>{if(tbody.querySelector(`[data-task-id="${CSS.escape(task.id)}"]`))return;const row=document.createElement('tr');row.dataset.taskId=task.id;
-    const values=[`${task.id} · ${task.title}`,task.repository.name,task.difficulty,task.repository.sha,'Draft'];
+  saved.forEach(task=>{if(tbody.querySelector(`[data-task-id="${CSS.escape(task.id)}"]`))return;const row=document.createElement('tr');row.dataset.taskId=task.id;if(task.project?.id)row.dataset.project=task.project.id;
+    const values=[`${task.id} · ${task.title}`,`${task.project?.name||'Project'} · ${task.repository.name}`,task.difficulty,task.repository.sha,'Draft'];
     values.forEach((value,index)=>{const cell=document.createElement('td');if(index===0){const strong=document.createElement('strong');strong.textContent=value;const detail=document.createElement('span');detail.className='muted';detail.textContent=task.description;cell.append(strong,document.createElement('br'),detail)}else if(index===4){const pill=document.createElement('span');pill.className='pill blue';pill.textContent='Draft';cell.append(pill)}else cell.textContent=value;row.append(cell)});tbody.prepend(row);
   });
   const badge=document.querySelector('#tasks .sectionhead .pill');if(badge)badge.textContent=`${tbody.querySelectorAll('tr').length} packages`;
-  document.getElementById('statTasks').textContent=String(24+saved.length);filterTasks();
+  const taskStat=document.getElementById('statTasks');if(taskStat)taskStat.textContent=String(24+saved.length);filterTasks();
 }
 function restoreDraftTasks(){try{renderDraftRows()}catch(error){localStorage.removeItem('forgebenchDrafts');toast('Saved browser drafts could not be restored; local draft storage was reset.')}}
 function exportDraft(){
@@ -480,18 +592,17 @@ function analyzeRepo(second=false){
   document.getElementById('pipelineStatus').textContent='Demo analysis running…';toast('Demo analysis started. No remote repository is cloned.');
   setTimeout(()=>{steps.forEach(step=>{step.classList.remove('current');step.classList.add('done')});document.getElementById('pipelineStatus').textContent='Demo analysis · complete';toast('Demo analysis complete. Connect a backend to inspect real repository files.')},900);
 }
-function runValidation(){
-  const button=document.querySelector('#validation .sectionhead .btn');if(button){button.disabled=true;button.textContent='Running checks…'}
-  const rows=[...document.querySelectorAll('#validation .contentgrid .section:first-child tbody tr')];rows.forEach(row=>{const pill=row.querySelector('.pill');if(pill){pill.className='pill amber';pill.textContent='Running'}});
-  toast('Demo validation started. These checks are simulated, not repository test runs.');
-  setTimeout(()=>{rows.forEach(row=>{const pill=row.querySelector('.pill');if(pill){pill.className='pill green';pill.textContent='Passed'}});if(button){button.disabled=false;button.textContent='▶ Run validation'}toast('Demo validation finished. No code, tests, or mutations were executed.')},1100);
+function runValidation(button){
+  if(button){button.dataset.label=button.textContent;button.disabled=true;button.textContent='Demo only…'}
+  toast('This prototype cannot execute repository checks. No code or tests were run.');
+  setTimeout(()=>{if(button){button.disabled=false;button.textContent=button.dataset.label}},1100)
 }
 const saveDraftButton=document.querySelector('#genResult .btn.primary');if(saveDraftButton){saveDraftButton.setAttribute('onclick','saveGeneratedTask()');saveDraftButton.textContent='Save draft to library →'}
 window.baseGenerateTask=generateTask;
 setupAppControls();
 </script>
 <script>
-labels.solution='Solution & tests';labels.agents='Agent connections';labels.runs='Parallel runs';labels.submissions='Submissions';labels.truth='Source of truth';labels.publish='Publish task';
+labels.projects='Projects';labels.explorer='Project explorer';labels.solution='Solution & tests';labels.agents='Agent connections';labels.runs='Parallel runs';labels.submissions='Submissions';labels.truth='Source of truth';labels.publish='Publish task';
 function setAuthoringMode(mode){document.querySelectorAll('.mode-button').forEach(button=>button.classList.toggle('active',button.dataset.mode===mode));const manual=mode==='manual';document.getElementById('manualFields').hidden=!manual;document.getElementById('modeNote').textContent=manual?'Write your own task specification and acceptance criteria. ForgeBench will still generate a test plan and require independent validation.':'Automatic mode proposes a draft from repository context. Review and edit every criterion before creating a reference answer.';document.getElementById('generateTaskButton').textContent=manual?'Create manual task draft':'✦ Generate task draft'}
 function generateTask(){
   if(document.querySelector('.mode-button.active')?.dataset.mode!=='manual'){window.baseGenerateTask();return}
@@ -504,7 +615,7 @@ function generateTask(){
   document.getElementById('generatedReq').replaceChildren(...criteria.map(text=>{const el=document.createElement('div');el.className='reqitem';el.textContent=text;return el}));document.getElementById('genEmpty').style.display='none';document.getElementById('genResult').style.display='block';document.getElementById('genStatus').className='pill blue';document.getElementById('genStatus').textContent='Manual draft';document.getElementById('generatedPreview').scrollIntoView({behavior:'smooth',block:'start'});toast('Manual task draft created. It is not yet a validated benchmark.');
 }
 function connectGitHub(){toast('GitHub OAuth is not connected in this static prototype. Production should use a least-privilege GitHub App.');}
-function startManualTest(){toast('Manual session created for TASK-024 v1.3.0. Add reviewer notes and evidence in a connected backend.');}
+function startManualTest(){toast('Manual review is a prototype placeholder. No review session or evidence was saved.');}
 function generateArtifacts(){toast('Demo artifacts shown. A real implementation should generate the answer patch and tests in separate isolated stages.');document.querySelector('#solution .sectionhead .pill')?.classList.replace('blue','green');}
 function openAgentDialog(){
   if(document.getElementById('agentDialog'))return;
@@ -591,7 +702,7 @@ document.getElementById('explorerRepoSelect')?.addEventListener('change',setExpl
 updateExplorerRepository(activeExplorerRepo);
 </script>
 <script>
-labels.projects='Projects';
+labels.projects='Projects';labels.quality='Quality checks';
 const agentPatches={
   claude:{name:'Claude Code',branch:'agent/claude/task-024',files:[
     {path:'src/services/reservationService.js',status:'modified',added:12,removed:3,lines:[['context',' export async function reserve(items) {'],['remove','-  return inventoryRepository.reserve(items);'],['add','+  return inventoryRepository.withTransaction(async tx => {'],['add','+    for (const item of items) {'],['add','+      const available = await tx.lockAvailable(item.productId);'],['add','+      if (available < item.quantity) throw new OutOfStockError();'],['add','+      await tx.reserve(item.productId, item.quantity);'],['add','+    }'],['add','+    return tx.commitReservation(items);'],['add','+  });'],['context',' }']]},
@@ -619,13 +730,124 @@ function openProjectDialog(){showFormDialog('Create / edit project','<label clas
 function openProjectRepoDialog(){showFormDialog('Add repository component','<label class="fieldlabel" for="componentRole">Component role</label><select class="field" id="componentRole"><option value="frontend">Frontend</option><option value="backend">Backend</option><option value="data">Data engineering</option><option value="service">Other service</option></select><label class="fieldlabel" for="componentUrl" style="margin-top:12px">GitHub repository URL</label><input class="field" id="componentUrl" class="field" placeholder="https://github.com/org/repository"><label class="fieldlabel" for="componentBranch" style="margin-top:12px">Branch / baseline</label><input class="field" id="componentBranch" placeholder="main or release branch"><p class="hint">The project stores a separate immutable commit SHA for each selected component.</p>','Add component',()=>{const url=document.getElementById('componentUrl').value.trim(),role=document.getElementById('componentRole').value,branch=document.getElementById('componentBranch').value.trim()||'main';if(!/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/?$/i.test(url)){toast('Enter a valid GitHub repository URL.');return false}const name=url.split('/').filter(Boolean).at(-1).replace(/\.git$/,'');const row=document.createElement('tr');row.dataset.projectRepo=role;const label={frontend:'Web frontend',backend:'Backend service',data:'Data engineering',service:'Project service'}[role];const badge={frontend:'FE',backend:'BE',data:'DE',service:'SV'}[role];row.innerHTML=`<td><span class="component-icon ${role==='frontend'?'fe':role==='data'?'de':'be'}">${badge}</span><strong>${safeText(label)}</strong></td><td>${safeText(name)}</td><td><code>${safeText(branch)}</code></td><td><code>Pending analysis</code></td><td>Detected after connection</td><td>Project component</td><td><span class="pill amber">Needs analysis</span></td>`;document.getElementById('projectReposBody').append(row);document.getElementById('projectRepoCount').textContent=document.querySelectorAll('#projectReposBody tr').length;toast(`${name} added as a ${label.toLowerCase()} component. Analyze it to pin a commit.`)})}
 function showFormDialog(title,body,submitLabel,onSubmit){let dialog=document.getElementById('formDialog');if(dialog)dialog.remove();dialog=document.createElement('dialog');dialog.id='formDialog';dialog.className='agent-dialog';dialog.innerHTML=`<form method="dialog"><div class="sectionhead"><h2>${safeText(title)}</h2><button class="iconbtn" value="cancel" aria-label="Close dialog">×</button></div>${body}<div class="actions" style="justify-content:flex-end;margin-top:16px"><button class="btn" value="cancel">Cancel</button><button class="btn primary" id="formDialogSubmit" type="button">${safeText(submitLabel)}</button></div></form>`;document.body.append(dialog);dialog.showModal();document.getElementById('formDialogSubmit').addEventListener('click',()=>{if(onSubmit()!==false){dialog.close();dialog.remove()}})}
 const generateTaskWithProjectManifest=window.generateTask;
-window.generateTask=function(...args){const result=generateTaskWithProjectManifest.apply(this,args);if(activeDraft){const project=document.getElementById('taskProjectSelect')?.value||'forge-commerce';const selected=[...document.querySelectorAll('#projects .scope-list input:checked')];const defaults=[{role:'frontend',repository:'forge-commerce-web',branch:'main',commit:'f31bc92'},{role:'backend',repository:'shopping-cart',branch:'main',commit:'a83f21c'}];const all=[...defaults,{role:'data',repository:'forge-commerce-data',branch:'release/2026-q4',commit:'c91a204'}];const components=selected.length?selected.map(input=>{const label=input.closest('label').innerText;return all.find(component=>label.toLowerCase().includes(component.role==='frontend'?'web frontend':component.role==='backend'?'commerce api':'data platform'))}).filter(Boolean):defaults;activeDraft.project={id:project,name:project==='forge-commerce'?'Forge Commerce':'Account Platform',components};}return result};
+window.generateTask=function(...args){
+  const project=document.getElementById('taskProjectSelect')?.value;
+  if(!project){toast('Choose a project workspace before generating a task.');document.getElementById('taskProjectSelect')?.focus();return}
+  renderProjectWorkspace(project);
+  const selected=[...document.querySelectorAll('#projects .scope-list label')].filter(label=>label.querySelector('input:checked'));
+  if(!selected.length){toast('Select at least one component in the Project workspace before generating a task.');return}
+  const result=generateTaskWithProjectManifest.apply(this,args);
+  if(activeDraft){
+    const forge=[{role:'frontend',repository:'forge-commerce-web',branch:'main',commit:'f31bc92'},{role:'backend',repository:'shopping-cart',branch:'main',commit:'a83f21c'},{role:'data',repository:'forge-commerce-data',branch:'release/2026-q4',commit:'c91a204'}];
+    const account=[{role:'frontend',repository:'account-web',branch:'main',commit:'b812e01'},{role:'backend',repository:'account-service',branch:'main',commit:'e219a7b'}];
+    const taskManager=[{role:'backend',repository:'task-manager',branch:'develop',commit:'9c10d42'}];
+    const all=project==='forge-commerce'?forge:project==='account-platform'?account:taskManager;
+    const components=selected.map(label=>all.find(component=>component.role===label.dataset.componentRole)).filter(Boolean);
+    if(!components.length){toast('The selected project has no matching component scope. Review the Project workspace before saving.');activeDraft=null;return}
+    const projectName={ 'forge-commerce':'Forge Commerce','account-platform':'Account Platform','task-manager':'Task Manager'}[project];
+    activeDraft.project={id:project,name:projectName,components};
+    document.querySelector('#genResult .eyebrow').textContent=`${activeDraft.id} · ${projectName.toUpperCase()} · FEATURE DEVELOPMENT`;
+    document.getElementById('generatedManifest').replaceChildren(...components.map(component=>{const item=document.createElement('span');item.textContent=`${component.repository} · ${component.branch} @ ${component.commit}`;return item}));
+  }
+  return result;
+};
 function toggleMobileNav(){document.querySelector('.sidebar').classList.toggle('mobile-open')}
-function connectGitHub(){const body=`<p class="muted">ForgeBench requests access through GitHub's official installation flow. No token or password is entered into ForgeBench.</p><label class="fieldlabel" for="githubAccount">GitHub account / organization</label><select class="field" id="githubAccount"><option>Choose GitHub organization…</option><option value="acme-commerce">acme-commerce (sample org)</option><option value="personal">Personal account (sample)</option></select><div class="github-repo-picker"><b>Select repositories</b><label><input type="checkbox" value="forge-commerce-web"> forge-commerce-web <small>Private · frontend</small></label><label><input type="checkbox" value="shopping-cart"> shopping-cart <small>Private · backend</small></label><label><input type="checkbox" value="forge-commerce-data"> forge-commerce-data <small>Private · data engineering</small></label></div><div class="permission-box"><strong>Requested permissions</strong><span>Repository metadata · Read</span><span>Repository contents · Read</span><span>Actions/status checks · Read (optional)</span><label><input id="prWritePermission" type="checkbox"> Request pull-request write permission separately (optional)</label></div><p class="security-note">Production controls: GitHub App installation token scoped to selected repositories; short-lived token; server-side secret storage; no PAT form; audit trail; disconnect/revoke access; no network access from untrusted test containers by default.</p>`;showFormDialog('Connect a private GitHub repository',body,'Continue to GitHub',()=>{const account=document.getElementById('githubAccount').value,selected=[...document.querySelectorAll('.github-repo-picker input:checked')];if(!account||!selected.length){toast('Choose an organization and at least one repository.');return false}const org=account==='personal'?'personal':account,names=selected.map(input=>input.value),project=document.getElementById('repoProjectAssign')?.value||'Forge Commerce';document.getElementById('repoVisibility').value='private';document.querySelector('#privateRepoInfo strong').textContent='GitHub App access configured · demo';document.querySelector('#privateRepoInfo p').textContent=`Selected ${names.length} private repository/repositories for read-only access in ${project}. Demo only—no OAuth exchange occurred.`;const repoBody=document.querySelector('#repositories tbody');const projectBody=document.getElementById('projectReposBody');names.forEach(name=>{const url=`https://github.com/${org}/${name}`;document.getElementById('repoUrl2').value=url;if(![...repoBody.rows].some(row=>row.textContent.includes(name))){const row=document.createElement('tr');row.innerHTML=`<td><strong>${safeText(name)}</strong><br><span class="muted">${safeText(org)}/${safeText(name)} · Private</span></td><td>Detected after analysis</td><td>main</td><td><code>Pending analysis</code></td><td><span class="pill blue">App access · demo</span></td>`;repoBody.append(row)}if(![...projectBody.rows].some(row=>row.textContent.includes(name))){const role=name.includes('web')?'frontend':name.includes('data')?'data':'backend',componentLabel={frontend:'Web frontend',backend:'Backend service',data:'Data engineering'}[role],badge={frontend:'FE',backend:'BE',data:'DE'}[role],style={frontend:'fe',backend:'be',data:'de'}[role],row=document.createElement('tr');row.dataset.projectRepo=role;row.innerHTML=`<td><span class="component-icon ${style}">${badge}</span><strong>${componentLabel}</strong></td><td>${safeText(name)}</td><td><code>main</code></td><td><code>Pending analysis</code></td><td>Detected after connection</td><td>Private component · ${safeText(project)}</td><td><span class="pill amber">Needs analysis</span></td>`;projectBody.append(row)}});document.getElementById('projectRepoCount').textContent=String(projectBody.rows.length);toast(`Demo connection created for ${names.length} private repository/repositories. No credentials were issued or stored.`)})}
-document.getElementById('globalProjectSelect')?.addEventListener('change',event=>{const name=event.target.value==='forge-commerce'?'Forge Commerce':'Account Platform';const label=document.getElementById('activeProjectName');const heading=document.getElementById('projectHeading');if(label)label.textContent=name;if(heading)heading.textContent=name;const taskProject=document.getElementById('taskProjectSelect');if(taskProject)taskProject.value=event.target.value;toast(`Switched workspace to ${name}.`)});
+function openProjectDialog(){const current=document.getElementById('projectHeading').textContent;showFormDialog('Edit project','<label class="fieldlabel" for="projectNameInput">Project name</label><input class="field" id="projectNameInput" required value="'+safeText(current)+'"><label class="fieldlabel" for="projectDescriptionInput" style="margin-top:12px">Description</label><textarea class="field" id="projectDescriptionInput" rows="3">Project workspace</textarea>','Save project',()=>{const name=document.getElementById('projectNameInput').value.trim();if(!name){document.getElementById('projectNameInput').focus();return false}document.getElementById('projectHeading').textContent=name;document.getElementById('selectedProjectLabel').textContent=name;const active=document.getElementById('globalProjectSelect'),task=document.getElementById('taskProjectSelect');if(active&&active.value!=='all-projects')active.options[active.selectedIndex].textContent=name;if(task&&task.value)task.options[task.selectedIndex].textContent=`${name} · ${document.querySelectorAll('#projectReposBody tr').length} components`;toast('Project name updated in this browser demo.')})}
+function connectGitHub(){const body=`<p class="muted">Connect a GitHub App installation and select which repositories may become components of this project. This demo does not authenticate or fetch source.</p><label class="fieldlabel" for="githubAccount">GitHub account / organization</label><select class="field" id="githubAccount"><option value="">Choose an account…</option><option value="acme-commerce">acme-commerce (sample org)</option><option value="personal">Personal account (sample)</option></select><div class="github-repo-picker"><b>Available repositories</b><label><input type="checkbox" value="forge-commerce-web"> forge-commerce-web <small>Private · frontend</small></label><label><input type="checkbox" value="shopping-cart"> shopping-cart <small>Private · backend</small></label><label><input type="checkbox" value="forge-commerce-data"> forge-commerce-data <small>Private · data engineering</small></label></div><div class="permission-box"><strong>Requested permissions</strong><span>Repository metadata · Read</span><span>Repository contents · Read</span><label><input id="prWritePermission" type="checkbox"> Request pull-request write permission separately (optional)</label></div><p class="security-note">Never paste a token here. Production access uses short-lived, server-held GitHub App credentials scoped to selected repositories, with audit and revocation controls.</p>`;showFormDialog('Connect repositories to this project',body,'Add selected components',()=>{const account=document.getElementById('githubAccount').value,selected=[...document.querySelectorAll('.github-repo-picker input:checked')],projectBody=document.getElementById('projectReposBody');if(!account||!selected.length){toast('Choose an account and at least one repository.');return false}const org=account==='personal'?'personal':account;selected.forEach(input=>{const name=input.value;if([...projectBody.rows].some(row=>row.cells[1]?.textContent===name))return;const role=name.includes('web')?'frontend':name.includes('data')?'data':'backend',componentLabel={frontend:'Web frontend',backend:'Backend service',data:'Data engineering'}[role],badge={frontend:'FE',backend:'BE',data:'DE'}[role],style={frontend:'fe',backend:'be',data:'de'}[role],row=document.createElement('tr');row.dataset.projectRepo=role;row.innerHTML=`<td><span class="component-icon ${style}">${badge}</span><strong>${componentLabel}</strong></td><td>${safeText(name)}</td><td><code>Pending selection</code></td><td><code>Pending analysis</code></td><td>Detected after connection</td><td>Private component · ${safeText(org)}</td><td><span class="pill amber">Needs analysis</span></td>`;projectBody.append(row)});document.getElementById('projectRepoCount').textContent=String(projectBody.rows.length);toast(`Selected repositories added as project components in demo mode. No credentials were issued or stored.`)})}
+function updateGeneratorAreas(projectKey){
+  const field=document.getElementById('featureArea');if(!field)return;
+  const choices={
+    'all-projects':['Cart and checkout','Authentication and authorization','Inventory management','Notifications','Account notifications','Task reminders and scheduling','Reporting and analytics'],
+    'forge-commerce':['Cart and checkout','Inventory management','Notifications'],
+    'account-platform':['Authentication and authorization','Account notifications'],
+    'task-manager':['Task reminders and scheduling']
+  }[projectKey]||[];
+  field.replaceChildren(...choices.map((area,index)=>{const option=document.createElement('option');option.value=area;option.textContent=area;if(index===0)option.selected=true;return option}));
+}
+function renderProjectWorkspace(projectKey){
+  const projects={
+    'forge-commerce':{name:'Forge Commerce',description:'Multi-repository commerce platform · Owner: Platform team',scope:'This example task spans the web frontend and commerce API. The data component is explicitly excluded from the task baseline.',components:[{role:'frontend',label:'Web frontend',repo:'forge-commerce-web',branch:'main',commit:'f31bc92',stack:'React · TypeScript',purpose:'User interface and browser flows',icon:'FE',selected:true},{role:'backend',label:'Commerce API',repo:'shopping-cart',branch:'main',commit:'a83f21c',stack:'Node.js · Express',purpose:'REST API, checkout, inventory',icon:'BE',selected:true},{role:'data',label:'Data platform',repo:'forge-commerce-data',branch:'release/2026-q4',commit:'c91a204',stack:'Python · Airflow · dbt',purpose:'Ingestion, models, warehouse jobs',icon:'DE',selected:false}]},
+    'account-platform':{name:'Account Platform',description:'Identity and access platform · Owner: Platform team',scope:'This example task spans the account web component and identity API.',components:[{role:'frontend',label:'Account web',repo:'account-web',branch:'main',commit:'b812e01',stack:'React · TypeScript',purpose:'Account and MFA user flows',icon:'FE',selected:true},{role:'backend',label:'Account API',repo:'account-service',branch:'main',commit:'e219a7b',stack:'Python · FastAPI',purpose:'Identity, sessions and MFA',icon:'BE',selected:true}]},
+    'task-manager':{name:'Task Manager',description:'Task scheduling platform · Owner: Productivity team',scope:'This example task uses the Tasks API baseline.',components:[{role:'backend',label:'Tasks API',repo:'task-manager',branch:'develop',commit:'9c10d42',stack:'Java · Spring',purpose:'Task lifecycle and scheduling',icon:'BE',selected:true}]}
+  };
+  const project=projects[projectKey];
+  if(!project)return;
+  if(activeProjectWorkspaceKey!==projectKey){updateGeneratorAreas(projectKey);activeProjectWorkspaceKey=projectKey}
+  const rows=project.components.map(component=>`<tr data-project-repo="${component.role}"><td><span class="component-icon ${component.icon==='FE'?'fe':component.icon==='DE'?'de':'be'}">${component.icon}</span><strong>${component.label}</strong></td><td>${component.repo}</td><td><code>${component.branch}</code></td><td><code>${component.commit}</code></td><td>${component.stack}</td><td>${component.purpose}</td><td><span class="pill green">Analyzed · sample</span></td></tr>`).join('');
+  const scope=project.components.map(component=>`<label data-component-role="${component.role}"><input type="checkbox" ${component.selected?'checked':''}> <span><b>${component.label}</b><small>${component.repo} · ${component.branch} @ ${component.commit}</small></span><i>${component.icon}</i></label>`).join('');
+  const name=project.name;
+  document.getElementById('projectHeading').textContent=name;
+  document.getElementById('selectedProjectLabel').textContent=name;
+  document.getElementById('projectDetail').hidden=false;
+  document.getElementById('projectDescription').textContent=project.description;
+  document.getElementById('projectRepoCount').textContent=String(project.components.length);
+  document.getElementById('projectAreaCount').textContent=String(project.components.length);
+  document.getElementById('projectReposBody').innerHTML=rows;
+  document.querySelector('#projects .scope-list').innerHTML=scope;
+  document.getElementById('projectScopeDescription').textContent=project.scope;
+  const taskProject=document.getElementById('taskProjectSelect');
+  if(taskProject&&taskProject.value!==projectKey&&document.activeElement!==taskProject)taskProject.value=projectKey;
+  const primary=document.getElementById('repoSelect');
+  if(primary)primary.innerHTML=[...project.components].sort((a,b)=>a.role==='backend'?-1:b.role==='backend'?1:0).map(component=>`<option value="${component.repo} · ${component.commit}">${component.repo} · ${component.commit}</option>`).join('');
+  const componentCount=document.querySelectorAll('#projectReposBody tr').length;
+  document.querySelector('#projects .project-stats span:nth-child(3)').innerHTML=`<b>${projectKey==='forge-commerce'?'2':projectKey==='account-platform'?'1':'1'}</b> active task packages`;
+  document.querySelector('#projects .project-stats span:nth-child(4)').innerHTML=`<b>${projectKey==='forge-commerce'?'main + release branches':projectKey==='account-platform'?'main branch':'develop branch'}</b> tracked baselines`;
+  if(taskProject&&taskProject.value===projectKey)taskProject.options[taskProject.selectedIndex].textContent=`${name} · ${componentCount} component${componentCount===1?'':'s'}`;
+}
+function showAllProjects(){const scope=document.getElementById('globalProjectSelect');if(scope)scope.value='all-projects';document.getElementById('projectDetail').hidden=true;document.getElementById('projectPageTitle').textContent='All projects';const taskProject=document.getElementById('taskProjectSelect');if(taskProject)taskProject.value='';applyWorkspaceScope('all-projects')}
+function openProject(projectKey){const scope=document.getElementById('globalProjectSelect');if(scope)scope.value=projectKey;renderProjectWorkspace(projectKey);applyWorkspaceScope(projectKey);navigate('projects')}
+function openCurrentProjectExplorer(){const scope=document.getElementById('globalProjectSelect')?.value;const projectKey=scope&&scope!=='all-projects'?scope:activeProjectWorkspaceKey;const repoKey={'forge-commerce':'shopping-cart · a83f21c','account-platform':'account-service · e219a7b','task-manager':'task-manager · 9c10d42'}[projectKey];if(repoKey)openRepositoryExplorer(repoKey);else toast('Select a project before opening its explorer.')}
+const solutionArtifactFixtures={
+  'TASK-024':{files:['src/inventory/reservations.js','src/orders/cancel.js','tests/reservations.test.js'],stats:'3 files changed · +48 −7',testFile:'tests/reservations.test.js',patch:"+ export async function reserveStock(itemId, quantity) {\\n+   if (!Number.isInteger(quantity) || quantity <= 0) throw new ValidationError();\\n+   return inventory.withLock(itemId, async stock => {\\n+     if (stock.available < quantity) throw new OutOfStockError();\\n+     stock.available -= quantity;\\n+     stock.reserved += quantity;\\n+   });\\n+ }",tests:[['reserves available stock','Given sufficient inventory, requested units are reserved.','Feature · criterion 1'],['rejects oversell','When requested quantity exceeds availability, reject without changing stock.','Boundary · criterion 2'],['releases on cancellation','Cancellation restores reserved units exactly once.','Feature · criterion 3'],['serializes concurrent reservations','Parallel requests cannot reserve beyond available stock.','Concurrency · criterion 4']],script:"describe('inventory reservations', () => {\\n  it('rejects a reservation larger than available stock', async () => {\\n    await expect(reserveStock('sku-1', 6)).rejects.toThrow(OutOfStockError);\\n    expect(await getAvailable('sku-1')).toBe(5);\\n  });\\n});"},
+  'TASK-023':{files:['src/coupons/couponService.js','tests/coupons/couponService.test.js'],stats:'2 files changed · +34 −3',testFile:'tests/coupons/couponService.test.js',patch:"+ export function applyCoupon(cart, coupon, now) {\\n+   if (coupon.expiresAt <= now) throw new CouponExpiredError();\\n+   if (cart.subtotal < coupon.minimumSpend) throw new MinimumSpendError();\\n+   return calculateDiscount(cart, coupon);\\n+ }",tests:[['applies an eligible coupon','A valid, unexpired coupon reduces the cart total.','Feature · criterion 1'],['rejects expired coupon','An expired coupon returns a clear failure response.','Boundary · criterion 2'],['enforces minimum spend','A cart below the coupon threshold is not discounted.','Boundary · criterion 3']],script:"describe('coupon eligibility', () => {\\n  it('rejects an expired coupon', () => {\\n    expect(() => applyCoupon(cart, expiredCoupon, now)).toThrow(CouponExpiredError);\\n  });\\n});"},
+  'TASK-022':{files:['src/auth/rateLimiter.py','tests/auth/test_rate_limiter.py'],stats:'2 files changed · +42 −5',testFile:'tests/auth/test_rate_limiter.py',patch:"+ def allow_login_attempt(account_id, now):\\n+     attempts = failed_attempts(account_id, since=now - WINDOW)\\n+     if len(attempts) >= MAX_ATTEMPTS:\\n+         raise LoginTemporarilyBlocked()\\n+     return True",tests:[['allows normal login','Accounts below the configured failure threshold can continue.','Feature · criterion 1'],['blocks repeated failures','Attempts above the threshold are temporarily rejected.','Boundary · criterion 2'],['expires the restriction','Attempts are allowed again after the configured window.','Time · criterion 3']],script:"def test_blocks_repeated_failed_attempts():\\n    for _ in range(MAX_ATTEMPTS):\\n        record_failed_login(account_id, now)\\n    with pytest.raises(LoginTemporarilyBlocked):\\n        allow_login_attempt(account_id, now)"},
+  'TASK-021':{files:['src/reminders/ReminderScheduler.java','src/test/ReminderSchedulerTest.java'],stats:'2 files changed · +39 −4',testFile:'src/test/ReminderSchedulerTest.java',patch:"+ public Reminder schedule(Task task, Instant when) {\\n+   if (!when.isAfter(clock.instant())) {\\n+     throw new InvalidScheduleTimeException();\\n+   }\\n+   return reminderRepository.create(task.id(), when);\\n+ }",tests:[['schedules a future reminder','A reminder is queued for a valid future due time.','Feature · criterion 1'],['rejects past schedule times','An invalid or past schedule time is rejected.','Boundary · criterion 2'],['delivers once','An eligible reminder is delivered exactly once.','Idempotency · criterion 3']],script:"@Test\\nvoid rejectsPastReminderTime() {\\n    assertThrows(InvalidScheduleTimeException.class,\\n        () -> scheduler.schedule(task, clock.instant().minusSeconds(1)));\\n}"}
+};
+function updateSelectedTaskContext(selectId){
+  const select=document.getElementById(selectId);if(!select)return;
+  const option=select.options[select.selectedIndex];if(!option)return;
+  if(selectId==='solutionTaskSelect'){
+    const projects={'forge-commerce':'Forge Commerce · shopping-cart @ a83f21c','account-platform':'Account Platform · account-service @ e219a7b','task-manager':'Task Manager · task-manager @ 9c10d42'};
+    document.getElementById('solutionProjectBaseline').textContent=projects[option.dataset.project]||'Project baseline';
+    document.getElementById('solutionTaskVersion').textContent=`Task ${option.value} · demo`;
+    const fixture=solutionArtifactFixtures[option.value];
+    if(fixture){
+      const files=document.getElementById('referencePatchFiles');
+      files.replaceChildren(...fixture.files.map(path=>{const span=document.createElement('span');span.textContent=path;return span}));
+      document.getElementById('referencePatchStats').textContent=fixture.stats;
+      document.getElementById('solutionTestFile').textContent=fixture.testFile;
+      document.getElementById('referencePatchPreview').innerHTML=safeText(fixture.patch).replace(/\\n/g,'<br>');
+      document.getElementById('testScriptPreview').innerHTML=safeText(fixture.script).replace(/\\n/g,'<br>');
+      document.getElementById('solutionTestCases').replaceChildren(...fixture.tests.map((test,index)=>{const card=document.createElement('div');card.className='test-case';const title=document.createElement('b'),description=document.createElement('span'),type=document.createElement('small');title.textContent=`TC-${String(index+1).padStart(2,'0')} · ${test[0]}`;description.textContent=test[1];type.textContent=test[2];card.append(title,description,type);return card}));
+    }
+  }
+}
+function applyWorkspaceScope(projectKey){
+  const scope=projectKey||'all-projects',all=scope==='all-projects';
+  if(all){updateGeneratorAreas('all-projects');activeProjectWorkspaceKey=null}
+  document.querySelectorAll('[data-project-card]').forEach(card=>{card.hidden=!all&&card.dataset.projectCard!==scope});
+  document.querySelectorAll('#recentTasks .taskrow[data-project]').forEach(row=>{row.hidden=!all&&row.dataset.project!==scope});
+  document.querySelectorAll('#evaluation tbody tr').forEach(row=>{row.hidden=!all&&row.dataset.project!==scope});
+  document.querySelectorAll('#solutionTaskSelect option, #evaluationTaskSelect option').forEach(option=>{option.hidden=Boolean(option.dataset.project&&!all&&option.dataset.project!==scope)});
+  ['solutionTaskSelect','evaluationTaskSelect'].forEach(id=>{const select=document.getElementById(id);if(select){const current=select.options[select.selectedIndex];if(current?.hidden){const next=[...select.options].find(option=>!option.hidden);if(next)select.value=next.value}updateSelectedTaskContext(id)}});
+  const taskProject=document.getElementById('taskProjectSelect');
+  if(taskProject){
+    [...taskProject.options].forEach(option=>{option.hidden=Boolean(option.value&&!all&&option.value!==scope)});
+    if(all)taskProject.value='';
+    else {taskProject.value=scope;renderProjectWorkspace(scope)}
+  }
+  if(all){document.getElementById('projectDetail').hidden=true;document.getElementById('projectPageTitle').textContent='All projects'}
+  else {renderProjectWorkspace(scope)}
+  filterTasks();
+}
+document.getElementById('globalProjectSelect')?.addEventListener('change',event=>{applyWorkspaceScope(event.target.value);toast(`Workspace scope: ${event.target.options[event.target.selectedIndex].text}.`)});
+document.getElementById('taskProjectSelect')?.addEventListener('change',event=>{if(event.target.value)renderProjectWorkspace(event.target.value)});
+document.getElementById('solutionTaskSelect')?.addEventListener('change',()=>updateSelectedTaskContext('solutionTaskSelect'));
+document.getElementById('evaluationTaskSelect')?.addEventListener('change',()=>updateSelectedTaskContext('evaluationTaskSelect'));
 document.getElementById('repoVisibility')?.addEventListener('change',event=>{const panel=document.getElementById('privateRepoInfo');panel.classList.toggle('private-selected',event.target.value==='private');if(event.target.value==='private')toast('Private repositories require the GitHub App authorization flow; do not paste a token.');});
 document.querySelectorAll('.nav button').forEach(button=>button.addEventListener('click',()=>document.querySelector('.sidebar')?.classList.remove('mobile-open')));
 document.addEventListener('click',event=>{const sidebar=document.querySelector('.sidebar');if(sidebar?.classList.contains('mobile-open')&&!sidebar.contains(event.target)&&!event.target.closest('.mobile-menu'))sidebar.classList.remove('mobile-open')});
+applyWorkspaceScope('all-projects');
 </script>
 </body>
 </html>
