@@ -178,9 +178,9 @@ export const RepositoriesPage = () => {
             className="bg-[#0f172a] border border-slate-700 text-xs font-medium text-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-500"
           >
             <option value="all">All Sources</option>
-            <option value="github">GitHub</option>
-            <option value="local">Local Connector</option>
-            <option value="zip">ZIP Ingestion</option>
+            <option value="github">GitHub Repositories (Active)</option>
+            <option value="local" disabled>Local Connector (On Hold)</option>
+            <option value="zip" disabled>ZIP Ingestion (On Hold)</option>
           </select>
 
           <select
@@ -346,41 +346,35 @@ export const RepositoriesPage = () => {
                   <button
                     type="button"
                     onClick={() => setSourceMethod('github')}
-                    className={`flex items-center justify-center gap-2 py-2 rounded-md text-xs font-semibold transition-colors ${
-                      sourceMethod === 'github'
-                        ? 'bg-indigo-600 text-white shadow-sm'
-                        : 'text-slate-400 hover:text-slate-200'
-                    }`}
+                    className="flex items-center justify-center gap-1.5 py-2 rounded-md text-xs font-semibold bg-indigo-600 text-white shadow-sm transition-colors"
                   >
                     <GitBranch className="h-3.5 w-3.5" />
                     <span>GitHub Repo</span>
+                    <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-1 py-0.2 rounded font-mono">Active</span>
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => setSourceMethod('local')}
-                    className={`flex items-center justify-center gap-2 py-2 rounded-md text-xs font-semibold transition-colors ${
-                      sourceMethod === 'local'
-                        ? 'bg-indigo-600 text-white shadow-sm'
-                        : 'text-slate-400 hover:text-slate-200'
-                    }`}
+                  <div
+                    title="Local Repository ingestion is currently on hold"
+                    className="flex items-center justify-center gap-1.5 py-2 rounded-md text-xs font-medium text-slate-500 bg-slate-900/60 border border-dashed border-slate-800 cursor-not-allowed select-none opacity-60"
                   >
-                    <FolderCode className="h-3.5 w-3.5" />
+                    <FolderCode className="h-3.5 w-3.5 text-slate-500" />
                     <span>Local Connector</span>
-                  </button>
+                    <span className="text-[9px] bg-slate-800 text-amber-400 px-1 py-0.2 rounded font-mono">On Hold</span>
+                  </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setSourceMethod('zip')}
-                    className={`flex items-center justify-center gap-2 py-2 rounded-md text-xs font-semibold transition-colors ${
-                      sourceMethod === 'zip'
-                        ? 'bg-indigo-600 text-white shadow-sm'
-                        : 'text-slate-400 hover:text-slate-200'
-                    }`}
+                  <div
+                    title="ZIP archive ingestion is currently on hold"
+                    className="flex items-center justify-center gap-1.5 py-2 rounded-md text-xs font-medium text-slate-500 bg-slate-900/60 border border-dashed border-slate-800 cursor-not-allowed select-none opacity-60"
                   >
-                    <FileArchive className="h-3.5 w-3.5" />
+                    <FileArchive className="h-3.5 w-3.5 text-slate-500" />
                     <span>ZIP Upload</span>
-                  </button>
+                    <span className="text-[9px] bg-slate-800 text-amber-400 px-1 py-0.2 rounded font-mono">On Hold</span>
+                  </div>
+                </div>
+
+                <div className="p-2.5 rounded-lg bg-indigo-950/20 border border-indigo-900/30 text-[11px] text-indigo-300 flex items-center justify-between">
+                  <span>GitHub Repository ingestion is currently the primary authorized input mode.</span>
+                  <span className="font-mono text-slate-400">HTTPS / SSH</span>
                 </div>
 
                 {/* Target Project Dropdown */}

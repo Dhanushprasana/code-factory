@@ -35,6 +35,7 @@ export const BenchmarkDetailsPage = () => {
   const tabs = [
     { key: 'overview', label: 'Overview' },
     { key: 'spec', label: 'Task Specification' },
+    { key: 'modulePlan', label: 'Module Impact & Why' },
     { key: 'repo', label: 'Repository Context' },
     { key: 'solution', label: 'Reference Solution' },
     { key: 'tests', label: 'Hidden Tests' },
@@ -232,6 +233,84 @@ export const BenchmarkDetailsPage = () => {
                 <h4 className="font-semibold text-slate-400 uppercase tracking-wider mb-1">Edge Cases</h4>
                 <p className="text-slate-200">{bench.taskSpecification?.edgeCases}</p>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: MODULE IMPACT & WHY */}
+      {activeTab === 'modulePlan' && (
+        <div className="rounded-xl bg-[#0f172a] border border-slate-800 p-6 space-y-6">
+          <div className="pb-3 border-b border-slate-800">
+            <h3 className="text-base font-bold text-white">Architectural Rationale & Module Impact Plan</h3>
+            <p className="text-xs text-slate-400">Detailed justification for why this feature extension is needed and exact files to add or edit</p>
+          </div>
+
+          {/* Rationale */}
+          <div className="p-4 rounded-lg bg-slate-900 border border-slate-800 space-y-2">
+            <h4 className="text-xs font-bold text-indigo-300 uppercase tracking-wider">
+              1. The Reason Why This Feature Fits & Is Needed
+            </h4>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Extending <strong>{bench.repositoryName}</strong> with <strong>{bench.name}</strong> fulfills a core functional requirement within the <strong>{bench.featureCategory}</strong> domain. Evaluating coding agents on this task benchmarks their capacity to understand existing controller/route patterns, draft isolated schema models, and preserve data integrity during high-throughput execution.
+            </p>
+          </div>
+
+          {/* Added Modules */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                <span>Modules That Have To Be Added</span>
+              </h4>
+              <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-900/40 font-bold">
+                NEW FILES
+              </span>
+            </div>
+
+            <div className="divide-y divide-slate-800 text-xs rounded-lg border border-slate-800 bg-[#090d16] p-3">
+              {(bench.referenceImplementation?.addedFiles || ['server/models/Coupon.js', 'server/controllers/couponController.js']).map((f, i) => (
+                <div key={i} className="py-2.5 flex items-start justify-between gap-2">
+                  <div>
+                    <span className="font-mono font-bold text-emerald-400">{f}</span>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      {f.includes('model') ? 'New ORM entity schema definitions, relational keys, and validation hooks.' : 'REST API controller endpoint handling request payload processing, business rules, and response serialization.'}
+                    </p>
+                  </div>
+                  <span className="text-[10px] font-mono text-slate-400 shrink-0 bg-slate-800 px-2 py-0.5 rounded">
+                    NEW MODULE
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Modified Modules */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-amber-400" />
+                <span>Modules That Need To Be Modified</span>
+              </h4>
+              <span className="text-[10px] font-mono text-amber-400 bg-amber-950/40 px-2 py-0.5 rounded border border-amber-900/40 font-bold">
+                EDITS REQUIRED
+              </span>
+            </div>
+
+            <div className="divide-y divide-slate-800 text-xs rounded-lg border border-slate-800 bg-[#090d16] p-3">
+              {(bench.referenceImplementation?.modifiedFiles || ['server/controllers/cartController.js', 'src/components/CartDrawer.jsx']).map((f, i) => (
+                <div key={i} className="py-2.5 flex items-start justify-between gap-2">
+                  <div>
+                    <span className="font-mono font-bold text-amber-400">{f}</span>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      {f.includes('server') ? 'Modify transaction handling and calculation logic to deduct discounts without breaking existing payment workflows.' : 'Wired UI state controls, input drawer components, and error display for failed coupon validations.'}
+                    </p>
+                  </div>
+                  <span className="text-[10px] font-mono text-slate-400 shrink-0 bg-slate-800 px-2 py-0.5 rounded">
+                    MODIFIED
+                  </span>
+                </div>
+              ))}
             </div>
           </div>
         </div>

@@ -17,14 +17,17 @@ import {
 
 export const LeaderboardPage = () => {
   const navigate = useNavigate();
-  const { leaderboard } = useApp();
+  const { leaderboard, repositories } = useApp();
 
-  const [viewType, setViewType] = useState('overall'); // 'overall' | 'category' | 'complexity'
+  // Primary mode: Feature-wise benchmarking (as requested)
+  const [viewType, setViewType] = useState('category'); // 'category' (Primary) | 'repository' (Add-on) | 'overall' (Add-on) | 'complexity'
   const [selectedCategory, setSelectedCategory] = useState('E-commerce');
+  const [selectedRepo, setSelectedRepo] = useState('ShopSphere');
   const [selectedComplexity, setSelectedComplexity] = useState('Medium');
   const [timeRange, setTimeRange] = useState('all');
 
   const categories = ['E-commerce', 'Authorization', 'Performance', 'Security', 'API Development'];
+  const repoNames = ['ShopSphere', 'TaskBoard', 'FinanceFlow', 'ChatConnect', 'InventoryPro'];
   const complexities = ['Easy', 'Medium', 'Hard', 'Expert'];
 
   // Sort and rank dynamically based on selected view
@@ -32,6 +35,11 @@ export const LeaderboardPage = () => {
     if (viewType === 'category') {
       const scoreA = a.categoryScores?.[selectedCategory] || a.averageScore;
       const scoreB = b.categoryScores?.[selectedCategory] || b.averageScore;
+      return scoreB - scoreA;
+    }
+    if (viewType === 'repository') {
+      const scoreA = a.categoryScores?.['E-commerce'] || a.averageScore;
+      const scoreB = b.categoryScores?.['E-commerce'] || b.averageScore;
       return scoreB - scoreA;
     }
     if (viewType === 'complexity') {
@@ -62,9 +70,10 @@ export const LeaderboardPage = () => {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 p-4 rounded-xl bg-[#0f172a] border border-slate-800">
         <div className="flex items-center gap-1 bg-[#141e33] p-1 rounded-lg border border-slate-800 self-start sm:self-auto">
           {[
-            { id: 'overall', label: 'Overall Leaderboard' },
-            { id: 'category', label: 'By Feature Category' },
-            { id: 'complexity', label: 'By Complexity Tier' },
+            { id: 'category', label: 'Feature-Wise (Primary)' },
+            { id: 'repository', label: 'Repo-Wise (Add-on)' },
+            { id: 'overall', label: 'Overall (Add-on)' },
+            { id: 'complexity', label: 'Complexity Tier' },
           ].map((v) => (
             <button
               key={v.id}
@@ -88,7 +97,19 @@ export const LeaderboardPage = () => {
               className="bg-[#111827] border border-slate-700 text-xs font-semibold text-white rounded-lg px-2.5 py-1.5 focus:outline-none"
             >
               {categories.map((c) => (
-                <option key={c} value={c}>{c}</option>
+                <option key={c} value={c}>{c} Feature Benchmark</option>
+              ))}
+            </select>
+          )}
+
+          {viewType === 'repository' && (
+            <select
+              value={selectedRepo}
+              onChange={(e) => setSelectedRepo(e.target.value)}
+              className="bg-[#111827] border border-slate-700 text-xs font-semibold text-white rounded-lg px-2.5 py-1.5 focus:outline-none"
+            >
+              {repoNames.map((r) => (
+                <option key={r} value={r}>{r} (Repo Slice)</option>
               ))}
             </select>
           )}

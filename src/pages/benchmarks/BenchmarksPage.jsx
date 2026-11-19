@@ -69,6 +69,65 @@ export const BenchmarksPage = () => {
         }
       />
 
+      {/* Dimension Selector & Feature-Wise Categorization */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl bg-slate-900/60 border border-slate-800">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-slate-300">Benchmarking View:</span>
+          <div className="inline-flex rounded-lg bg-slate-800/80 p-0.5 border border-slate-700/60">
+            <button
+              onClick={() => {}}
+              className="px-2.5 py-1 text-xs font-medium rounded-md bg-indigo-600 text-white shadow"
+            >
+              Feature-Wise (Primary)
+            </button>
+            <button
+              onClick={() => {}}
+              className="px-2.5 py-1 text-xs font-medium rounded-md text-slate-400 hover:text-slate-200"
+              title="Add-on view: Repository-wise benchmark grouping"
+            >
+              Repo-Wise (Add-on)
+            </button>
+            <button
+              onClick={() => {}}
+              className="px-2.5 py-1 text-xs font-medium rounded-md text-slate-400 hover:text-slate-200"
+              title="Add-on view: Overall global benchmark suite"
+            >
+              Overall (Add-on)
+            </button>
+          </div>
+        </div>
+        <div className="text-[11px] text-slate-400">
+          Showing <span className="text-white font-medium">{filtered.length}</span> benchmarks evaluated by feature capabilities
+        </div>
+      </div>
+
+      {/* Feature Category Quick Filter Pills */}
+      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+        <button
+          onClick={() => setCategoryFilter('all')}
+          className={`px-3 py-1.5 rounded-lg whitespace-nowrap transition-colors ${
+            categoryFilter === 'all'
+              ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/50 font-semibold'
+              : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          All Features
+        </button>
+        {categories.map((c) => (
+          <button
+            key={c}
+            onClick={() => setCategoryFilter(c)}
+            className={`px-3 py-1.5 rounded-lg whitespace-nowrap transition-colors ${
+              categoryFilter === c
+                ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/50 font-semibold'
+                : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            {c}
+          </button>
+        ))}
+      </div>
+
       {/* Filter and Search Bar */}
       <div className="flex flex-col lg:flex-row items-center justify-between gap-3">
         <SearchInput

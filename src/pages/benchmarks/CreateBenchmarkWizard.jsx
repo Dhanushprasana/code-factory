@@ -222,6 +222,7 @@ export const CreateBenchmarkWizard = () => {
     'Configure Discovery',
     'Feature Suggestions',
     'Task Specification',
+    'Module Plan & Why',
     'Reference Solution',
     'Hidden Tests',
     'Validation',
@@ -245,7 +246,7 @@ export const CreateBenchmarkWizard = () => {
           description="Synthesize a new coding benchmark: from repository analysis to hidden test generation and validation."
           badge={
             <span className="text-xs font-mono px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
-              Step {currentStep} of 8
+              Step {currentStep} of 9
             </span>
           }
         />
@@ -253,7 +254,7 @@ export const CreateBenchmarkWizard = () => {
 
       {/* Progress Wizard Bar */}
       <div className="rounded-xl bg-[#0f172a] border border-slate-800 p-4">
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
+        <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-2">
           {stepLabels.map((label, idx) => {
             const stepNum = idx + 1;
             const isCompleted = stepNum < currentStep;
@@ -627,8 +628,138 @@ export const CreateBenchmarkWizard = () => {
         </div>
       )}
 
-      {/* STEP 5: REFERENCE IMPLEMENTATION */}
+      {/* STEP 5: ARCHITECTURAL IMPACT & MODULE PLAN */}
       {currentStep === 5 && (
+        <div className="space-y-6">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+            <div>
+              <h3 className="text-base font-bold text-white">Architectural Impact & Module Plan</h3>
+              <p className="text-xs text-slate-400">Detailed breakdown of why this feature is required and exact modules to be added or modified</p>
+            </div>
+            <span className="text-xs font-mono px-2.5 py-1 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-semibold">
+              Pre-Implementation Blueprint
+            </span>
+          </div>
+
+          {/* Section 1: Architectural Rationale (Why this feature?) */}
+          <div className="rounded-xl bg-[#0f172a] border border-slate-800 p-5 space-y-3">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-indigo-400" />
+              <h4 className="text-sm font-bold text-white">Architectural Rationale: Why This Feature Fits & Is Needed</h4>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              In <strong>{selectedRepo.name}</strong>, the checkout and cart flows currently calculate subtotals purely from catalog item prices and baseline taxes. Lacking a structured discount mechanism limits realistic commercial evaluation. Introducing <strong>{selectedFeature.title}</strong> evaluates an agent's capability to safely extend critical transactional paths without destabilizing database integrity or breaking existing checkout pipelines.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2 text-xs">
+              <div className="p-3 rounded-lg bg-slate-900 border border-slate-800">
+                <span className="font-semibold text-indigo-300 block mb-1">Domain Necessity</span>
+                <p className="text-[11px] text-slate-400">Fulfills standard e-commerce promotional workflows and customer retention requirements.</p>
+              </div>
+              <div className="p-3 rounded-lg bg-slate-900 border border-slate-800">
+                <span className="font-semibold text-indigo-300 block mb-1">Concurrency Rigor</span>
+                <p className="text-[11px] text-slate-400">Requires atomic state locking so multi-use promo limits cannot be bypassed in high-volume rushes.</p>
+              </div>
+              <div className="p-3 rounded-lg bg-slate-900 border border-slate-800">
+                <span className="font-semibold text-indigo-300 block mb-1">Zero Regressions</span>
+                <p className="text-[11px] text-slate-400">Must interface cleanly with existing Stripe payment intent schemas and tax calculations.</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 2: Modules That Have To Be Added */}
+          <div className="rounded-xl bg-[#0f172a] border border-slate-800 p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="h-2 w-2 rounded-full bg-emerald-400" />
+                <h4 className="text-sm font-bold text-white">Modules That Have To Be ADDED (3 New Files)</h4>
+              </div>
+              <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-900/40 font-bold">
+                NEW FILES
+              </span>
+            </div>
+
+            <div className="divide-y divide-slate-800 text-xs">
+              <div className="py-3 flex flex-col sm:flex-row sm:items-start justify-between gap-2">
+                <div className="space-y-1">
+                  <span className="font-mono font-bold text-emerald-400 text-xs">server/models/Coupon.js</span>
+                  <p className="text-slate-300 text-[11px]">Database entity definition for promo codes, percentage/fixed discount amounts, usage limits, and expiration timestamps.</p>
+                </div>
+                <span className="text-[10px] text-slate-400 font-mono shrink-0 bg-slate-900 px-2 py-1 rounded border border-slate-800">
+                  Data Layer Model
+                </span>
+              </div>
+
+              <div className="py-3 flex flex-col sm:flex-row sm:items-start justify-between gap-2">
+                <div className="space-y-1">
+                  <span className="font-mono font-bold text-emerald-400 text-xs">server/controllers/couponController.js</span>
+                  <p className="text-slate-300 text-[11px]">Business logic handler executing promo code validation, min spend assertions, customer usage checks, and discount calculations.</p>
+                </div>
+                <span className="text-[10px] text-slate-400 font-mono shrink-0 bg-slate-900 px-2 py-1 rounded border border-slate-800">
+                  REST Controller
+                </span>
+              </div>
+
+              <div className="py-3 flex flex-col sm:flex-row sm:items-start justify-between gap-2">
+                <div className="space-y-1">
+                  <span className="font-mono font-bold text-emerald-400 text-xs">server/routes/couponRoutes.js</span>
+                  <p className="text-slate-300 text-[11px]">Express router registering POST /api/coupons/apply and GET /api/coupons/active with session middleware.</p>
+                </div>
+                <span className="text-[10px] text-slate-400 font-mono shrink-0 bg-slate-900 px-2 py-1 rounded border border-slate-800">
+                  Route Registration
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 3: Modules That Need To Be Modified */}
+          <div className="rounded-xl bg-[#0f172a] border border-slate-800 p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="h-2 w-2 rounded-full bg-amber-400" />
+                <h4 className="text-sm font-bold text-white">Modules That Need To Be MODIFIED (3 Existing Files)</h4>
+              </div>
+              <span className="text-[10px] font-mono text-amber-400 bg-amber-950/40 px-2 py-0.5 rounded border border-amber-900/40 font-bold">
+                CODE MODIFICATIONS
+              </span>
+            </div>
+
+            <div className="divide-y divide-slate-800 text-xs">
+              <div className="py-3 flex flex-col sm:flex-row sm:items-start justify-between gap-2">
+                <div className="space-y-1">
+                  <span className="font-mono font-bold text-amber-400 text-xs">server/controllers/cartController.js</span>
+                  <p className="text-slate-300 text-[11px]">Update calculateTotal() to check cart.appliedCoupon, subtract discounts safely, and enforce a minimum cart price of $0.00.</p>
+                </div>
+                <span className="text-[10px] text-slate-400 font-mono shrink-0 bg-slate-900 px-2 py-1 rounded border border-slate-800">
+                  Total Calculation Logic
+                </span>
+              </div>
+
+              <div className="py-3 flex flex-col sm:flex-row sm:items-start justify-between gap-2">
+                <div className="space-y-1">
+                  <span className="font-mono font-bold text-amber-400 text-xs">src/components/CartDrawer.jsx</span>
+                  <p className="text-slate-300 text-[11px]">Add promo code input drawer, loading state during validation, coupon badge display, and dynamic discount deduction line item.</p>
+                </div>
+                <span className="text-[10px] text-slate-400 font-mono shrink-0 bg-slate-900 px-2 py-1 rounded border border-slate-800">
+                  Frontend React UI
+                </span>
+              </div>
+
+              <div className="py-3 flex flex-col sm:flex-row sm:items-start justify-between gap-2">
+                <div className="space-y-1">
+                  <span className="font-mono font-bold text-amber-400 text-xs">server/routes/cartRoutes.js</span>
+                  <p className="text-slate-300 text-[11px]">Attach coupon lookup helper to active cart session fetchers to return appliedCoupon state on reload.</p>
+                </div>
+                <span className="text-[10px] text-slate-400 font-mono shrink-0 bg-slate-900 px-2 py-1 rounded border border-slate-800">
+                  Cart Middleware Route
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* STEP 6: REFERENCE IMPLEMENTATION */}
+      {currentStep === 6 && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
@@ -699,8 +830,8 @@ export const CreateBenchmarkWizard = () => {
         </div>
       )}
 
-      {/* STEP 6: HIDDEN TESTS GENERATION */}
-      {currentStep === 6 && (
+      {/* STEP 7: HIDDEN TESTS GENERATION */}
+      {currentStep === 7 && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
@@ -746,8 +877,8 @@ export const CreateBenchmarkWizard = () => {
         </div>
       )}
 
-      {/* STEP 7: BENCHMARK VALIDATION */}
-      {currentStep === 7 && (
+      {/* STEP 8: BENCHMARK VALIDATION */}
+      {currentStep === 8 && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
@@ -789,8 +920,8 @@ export const CreateBenchmarkWizard = () => {
         </div>
       )}
 
-      {/* STEP 8: PUBLISH BENCHMARK */}
-      {currentStep === 8 && (
+      {/* STEP 9: PUBLISH BENCHMARK */}
+      {currentStep === 9 && (
         <div className="rounded-xl bg-[#0f172a] border border-slate-800 p-6 space-y-6">
           <div className="flex items-center justify-between pb-3 border-b border-slate-800">
             <div>
@@ -862,10 +993,10 @@ export const CreateBenchmarkWizard = () => {
           <span>Previous Step</span>
         </button>
 
-        {currentStep < 8 ? (
+        {currentStep < 9 ? (
           <button
             type="button"
-            onClick={() => setCurrentStep((prev) => Math.min(8, prev + 1))}
+            onClick={() => setCurrentStep((prev) => Math.min(9, prev + 1))}
             className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white shadow-sm transition-colors"
           >
             <span>Continue</span>

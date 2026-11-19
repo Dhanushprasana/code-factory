@@ -72,12 +72,10 @@ export const RepositoryDetailsPage = () => {
   const tabs = [
     { key: 'overview', label: 'Overview', icon: GitBranch },
     { key: 'explorer', label: 'File Explorer', icon: FolderTree },
-    { key: 'architecture', label: 'Architecture', icon: Network },
     { key: 'apis', label: `APIs (${repo.apis?.length || 0})`, icon: Webhook },
     { key: 'models', label: `Data Models (${repo.dataModels?.length || 0})`, icon: Database },
     { key: 'dependencies', label: `Dependencies (${repo.dependencies?.length || 0})`, icon: Package },
-    { key: 'tests', label: 'Tests', icon: TestTube2 },
-    { key: 'history', label: 'Analysis History', icon: History },
+    { key: 'architecture', label: 'Architecture (On Hold)', icon: Network, onHold: true },
   ];
 
   // Filter APIs
@@ -215,7 +213,7 @@ export const RepositoryDetailsPage = () => {
       {/* TAB 1: OVERVIEW */}
       {activeTab === 'overview' && (
         <div className="space-y-6">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="p-4 rounded-xl bg-[#0f172a] border border-slate-800">
               <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Total Files</span>
               <div className="mt-2 text-2xl font-bold font-mono text-white">{repo.stats?.fileCount || 248}</div>
@@ -226,12 +224,6 @@ export const RepositoryDetailsPage = () => {
               <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Primary Language</span>
               <div className="mt-2 text-2xl font-bold font-mono text-indigo-400">{repo.primaryLanguage}</div>
               <div className="mt-1 text-xs text-slate-400">Node / JavaScript runtime</div>
-            </div>
-
-            <div className="p-4 rounded-xl bg-[#0f172a] border border-slate-800">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Test Coverage</span>
-              <div className="mt-2 text-2xl font-bold font-mono text-emerald-400">{repo.stats?.testCoverage || '78.4%'}</div>
-              <div className="mt-1 text-xs text-slate-400">{repo.tests?.totalDetectedCases || 86} detected unit tests</div>
             </div>
 
             <div className="p-4 rounded-xl bg-[#0f172a] border border-slate-800">
@@ -351,45 +343,18 @@ export function execute() {
         </div>
       )}
 
-      {/* TAB 3: ARCHITECTURE */}
+      {/* TAB: ARCHITECTURE (ON HOLD) */}
       {activeTab === 'architecture' && (
-        <div className="space-y-4 rounded-xl bg-[#0f172a] border border-slate-800 p-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-sm font-semibold text-white">Interactive Architecture Diagram</h3>
-              <p className="text-xs text-slate-400">Synthesized component layers, communications, and database bounds</p>
-            </div>
-            <span className="text-xs font-mono text-indigo-400 bg-indigo-950/40 px-2 py-0.5 rounded border border-indigo-800/40">
-              Auto-Synthesized
-            </span>
+        <div className="space-y-4 rounded-xl bg-[#0f172a] border border-slate-800 p-8 text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/30 mx-auto mb-3">
+            <Network className="h-6 w-6" />
           </div>
-
-          <div className="p-8 rounded-xl bg-[#090d16] border border-slate-800/80 min-h-[360px] flex flex-col md:flex-row items-center justify-around gap-6 relative">
-            {(repo.architecture?.nodes || [
-              { id: 'fe', label: 'Frontend Client (React)', type: 'frontend', details: 'Web Storefront UI' },
-              { id: 'api', label: 'API Gateway (Express)', type: 'backend', details: 'REST Controllers' },
-              { id: 'db', label: 'PostgreSQL DB', type: 'database', details: 'Relational Store' }
-            ]).map((node, idx) => (
-              <div
-                key={node.id}
-                className="flex flex-col items-center p-5 rounded-xl bg-[#0f172a] border border-slate-700/80 shadow-lg text-center w-56 hover:border-indigo-500/50 transition-all group"
-              >
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-600/10 text-indigo-400 mb-2 border border-indigo-500/20 group-hover:scale-105 transition-transform">
-                  {node.type === 'frontend' && <Code2 className="h-5 w-5" />}
-                  {node.type === 'backend' && <Server className="h-5 w-5" />}
-                  {node.type === 'database' && <Database className="h-5 w-5" />}
-                  {node.type === 'cache' && <Layers className="h-5 w-5" />}
-                  {node.type === 'external' && <ShieldCheck className="h-5 w-5" />}
-                </div>
-                <h4 className="text-xs font-bold text-white group-hover:text-indigo-300 transition-colors">
-                  {node.label}
-                </h4>
-                <p className="text-[11px] text-slate-400 mt-1">{node.details}</p>
-                <span className="mt-3 px-2 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider bg-slate-800 text-slate-300">
-                  {node.type}
-                </span>
-              </div>
-            ))}
+          <h3 className="text-base font-bold text-white">Repository Architecture Graph (On Hold)</h3>
+          <p className="text-xs text-slate-400 max-w-md mx-auto">
+            The automated AST architecture graph visualization is currently placed on hold while core repository APIs, data models, and benchmark evaluation flows are prioritized.
+          </p>
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-[11px] font-mono text-amber-300">
+            <span>Status: Feature temporarily paused</span>
           </div>
         </div>
       )}
@@ -556,84 +521,6 @@ export function execute() {
               </tbody>
             </table>
           </div>
-        </div>
-      )}
-
-      {/* TAB 7: TESTS */}
-      {activeTab === 'tests' && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="p-4 rounded-xl bg-[#0f172a] border border-slate-800">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Framework</span>
-              <div className="mt-2 text-lg font-bold text-white">{repo.tests?.framework || 'Vitest'}</div>
-              <div className="mt-1 text-xs text-slate-400">Detected test runner</div>
-            </div>
-            <div className="p-4 rounded-xl bg-[#0f172a] border border-slate-800">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Test Files</span>
-              <div className="mt-2 text-2xl font-bold font-mono text-white">{repo.tests?.totalFiles || 14}</div>
-              <div className="mt-1 text-xs text-slate-400">Active test suites</div>
-            </div>
-            <div className="p-4 rounded-xl bg-[#0f172a] border border-slate-800">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Total Cases</span>
-              <div className="mt-2 text-2xl font-bold font-mono text-indigo-400">{repo.tests?.totalDetectedCases || 86}</div>
-              <div className="mt-1 text-xs text-slate-400">Unit & integration specs</div>
-            </div>
-            <div className="p-4 rounded-xl bg-[#0f172a] border border-slate-800">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Baseline Coverage</span>
-              <div className="mt-2 text-2xl font-bold font-mono text-emerald-400">{repo.tests?.coverage || '78.4%'}</div>
-              <div className="mt-1 text-xs text-slate-400">Pre-benchmark state</div>
-            </div>
-          </div>
-
-          <div className="rounded-xl bg-[#0f172a] border border-slate-800 p-5 space-y-3">
-            <h3 className="text-sm font-semibold text-white">Detected Test Suites</h3>
-            <div className="divide-y divide-slate-800 text-xs">
-              {(repo.tests?.suites || []).map((suite, idx) => (
-                <div key={idx} className="py-2.5 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <TestTube2 className="h-4 w-4 text-indigo-400" />
-                    <span className="font-mono text-slate-200">{suite.file}</span>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <span className="text-slate-400">{suite.cases} test cases</span>
-                    <StatusBadge status={suite.status} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* TAB 8: ANALYSIS HISTORY */}
-      {activeTab === 'history' && (
-        <div className="rounded-xl bg-[#0f172a] border border-slate-800 overflow-hidden">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-slate-900/60 border-b border-slate-800 text-[11px] font-semibold uppercase text-slate-400">
-              <tr>
-                <th className="py-2.5 px-4">Date</th>
-                <th className="py-2.5 px-4">Commit SHA</th>
-                <th className="py-2.5 px-4">Files Scanned</th>
-                <th className="py-2.5 px-4">Scan Duration</th>
-                <th className="py-2.5 px-4">Warnings</th>
-                <th className="py-2.5 px-4 text-right">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/60 font-mono">
-              {(repo.analysisHistory || []).map((hist, idx) => (
-                <tr key={idx} className="hover:bg-slate-800/40">
-                  <td className="py-3 px-4 font-sans text-slate-300">{formatDate(hist.date)}</td>
-                  <td className="py-3 px-4 text-indigo-400 font-bold">{hist.commitSha}</td>
-                  <td className="py-3 px-4 text-white">{hist.filesScanned}</td>
-                  <td className="py-3 px-4 text-slate-400">{hist.duration}</td>
-                  <td className="py-3 px-4 text-slate-400">{hist.warnings}</td>
-                  <td className="py-3 px-4 text-right font-sans">
-                    <StatusBadge status={hist.status} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         </div>
       )}
     </div>
