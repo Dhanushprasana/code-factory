@@ -1,0 +1,222 @@
+export const mockActivities = [
+  {
+    id: "act-1",
+    type: "evaluation_completed",
+    title: "Benchmark Evaluation Completed",
+    description: "Evaluated 4 agents on 'Coupon & Discount Management Engine'. Antigravity scored 94.2.",
+    timestamp: "2026-11-19T13:58:30Z",
+    entityType: "run",
+    entityId: "run-101",
+    user: "System Evaluator",
+    badge: "success"
+  },
+  {
+    id: "act-2",
+    type: "agent_finished",
+    title: "Agent Execution Finished",
+    description: "Antigravity completed implementation of promo discounts in 7m 20s.",
+    timestamp: "2026-11-19T13:52:25Z",
+    entityType: "run",
+    entityId: "run-101",
+    user: "Antigravity",
+    badge: "info"
+  },
+  {
+    id: "act-3",
+    type: "run_started",
+    title: "Benchmark Run Dispatched",
+    description: "Run #101 initiated with 4 agents on ShopSphere main branch (c4a9f21).",
+    timestamp: "2026-11-19T13:45:00Z",
+    entityType: "run",
+    entityId: "run-101",
+    user: "Gary Chen",
+    badge: "neutral"
+  },
+  {
+    id: "act-4",
+    type: "repo_analyzed",
+    title: "Repository Analysis Completed",
+    description: "Analyzed ShopSphere: 248 files scanned, 8 APIs mapped, 4 data models indexed.",
+    timestamp: "2026-11-19T13:40:00Z",
+    entityType: "repository",
+    entityId: "repo-1",
+    user: "TaskForge Analyzer",
+    badge: "info"
+  },
+  {
+    id: "act-5",
+    type: "evaluation_completed",
+    title: "Evaluation Completed",
+    description: "Run #102 on TaskBoard completed. Antigravity achieved 92.5 score.",
+    timestamp: "2026-11-19T11:42:15Z",
+    entityType: "run",
+    entityId: "run-102",
+    user: "System Evaluator",
+    badge: "success"
+  },
+  {
+    id: "act-6",
+    type: "repo_analyzed",
+    title: "Repository Analysis Completed",
+    description: "TaskBoard analyzed on branch develop (d831bc4). Zero syntax warnings.",
+    timestamp: "2026-11-19T11:25:00Z",
+    entityType: "repository",
+    entityId: "repo-3",
+    user: "TaskForge Analyzer",
+    badge: "info"
+  },
+  {
+    id: "act-7",
+    type: "benchmark_created",
+    title: "Benchmark Draft Created",
+    description: "Generated draft benchmark: 'Exponential Backoff & APNs Fallback' for PushRelay.",
+    timestamp: "2026-11-19T08:30:00Z",
+    entityType: "benchmark",
+    entityId: "bench-11",
+    user: "Gary Chen",
+    badge: "warning"
+  },
+  {
+    id: "act-8",
+    type: "evaluation_completed",
+    title: "Evaluation Completed",
+    description: "Run #103 on FinanceFlow ledger audit finished. Antigravity won with 93.8.",
+    timestamp: "2026-11-18T19:15:20Z",
+    entityType: "run",
+    entityId: "run-103",
+    user: "System Evaluator",
+    badge: "success"
+  },
+  {
+    id: "act-9",
+    type: "repo_analyzed",
+    title: "Repository Analysis Completed",
+    description: "FinanceFlow analyzed: Double-entry ledger Knex models validated.",
+    timestamp: "2026-11-18T18:40:00Z",
+    entityType: "repository",
+    entityId: "repo-5",
+    user: "TaskForge Analyzer",
+    badge: "info"
+  },
+  {
+    id: "act-10",
+    type: "benchmark_validated",
+    title: "Benchmark Validation Passed",
+    description: "Validation passed for 'Pessimistic Locking & Expirable Stock Hold' with 88% coverage.",
+    timestamp: "2026-11-18T16:30:00Z",
+    entityType: "benchmark",
+    entityId: "bench-4",
+    user: "TaskForge Validator",
+    badge: "warning"
+  },
+  {
+    id: "act-11",
+    type: "evaluation_completed",
+    title: "Evaluation Completed",
+    description: "Run #104 on ChatConnect finished. OpenAI Codex won with 89.6 score.",
+    timestamp: "2026-11-18T14:24:50Z",
+    entityType: "run",
+    entityId: "run-104",
+    user: "System Evaluator",
+    badge: "success"
+  },
+  {
+    id: "act-12",
+    type: "benchmark_published",
+    title: "Benchmark Published",
+    description: "Published 'Optimistic Kanban Card Reordering' v1.0.0 to Benchmark Runner.",
+    timestamp: "2026-11-17T11:45:00Z",
+    entityType: "benchmark",
+    entityId: "bench-5",
+    user: "Gary Chen",
+    badge: "success"
+  },
+  {
+    id: "act-13",
+    type: "repo_connected",
+    title: "Repository Connected",
+    description: "Connected local repo 'CollabSync-Engine' at /var/repos/collab-sync-engine.",
+    timestamp: "2026-11-17T14:50:00Z",
+    entityType: "repository",
+    entityId: "repo-4",
+    user: "Gary Chen",
+    badge: "info"
+  },
+  {
+    id: "act-14",
+    type: "repo_connected",
+    title: "Repository Connected",
+    description: "Ingested ZIP repository 'PushRelay-Service' v1.4.0 (4.8 MB).",
+    timestamp: "2026-11-15T11:50:00Z",
+    entityType: "repository",
+    entityId: "repo-7",
+    user: "Gary Chen",
+    badge: "info"
+  },
+  {
+    id: "act-15",
+    type: "benchmark_published",
+    title: "Benchmark Published",
+    description: "Published 'Double-Entry Balance Audit Trail' v2.0.0.",
+    timestamp: "2026-11-16T14:00:00Z",
+    entityType: "benchmark",
+    entityId: "bench-8",
+    user: "Gary Chen",
+    badge: "success"
+  },
+  {
+    id: "act-16",
+    type: "evaluation_completed",
+    title: "Evaluation Completed",
+    description: "Run #105 on InventoryPro completed. Antigravity achieved 95.0.",
+    timestamp: "2026-11-17T17:29:40Z",
+    entityType: "run",
+    entityId: "run-105",
+    user: "System Evaluator",
+    badge: "success"
+  },
+  {
+    id: "act-17",
+    type: "benchmark_validation_failed",
+    title: "Benchmark Validation Failed",
+    description: "Stress test concurrency failed on 'Inventory Reservation Under Concurrency' v0.7.",
+    timestamp: "2026-11-15T10:25:00Z",
+    entityType: "benchmark",
+    entityId: "bench-4",
+    user: "TaskForge Validator",
+    badge: "error"
+  },
+  {
+    id: "act-18",
+    type: "project_created",
+    title: "Project Initialized",
+    description: "Created project 'E-Commerce Core & Checkout' with 2 connected repositories.",
+    timestamp: "2026-11-14T09:00:00Z",
+    entityType: "project",
+    entityId: "proj-1",
+    user: "Gary Chen",
+    badge: "neutral"
+  },
+  {
+    id: "act-19",
+    type: "human_review",
+    title: "Human Benchmark Review Approved",
+    description: "Principal Benchmark Architect approved evaluation #eval-101 with confidence 5/5.",
+    timestamp: "2026-11-19T14:15:00Z",
+    entityType: "result",
+    entityId: "eval-101",
+    user: "Principal Reviewer",
+    badge: "success"
+  },
+  {
+    id: "act-20",
+    type: "provider_configured",
+    title: "LLM Provider Key Configured",
+    description: "Configured Google Gemini API key (BYOK mode) for repository interpretation.",
+    timestamp: "2026-11-14T08:30:00Z",
+    entityType: "settings",
+    entityId: "prov-gemini",
+    user: "Gary Chen",
+    badge: "neutral"
+  }
+];
