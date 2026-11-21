@@ -25,7 +25,7 @@ apps/backend/src/
   app.module.ts                     # Root configuration and module composition
   main.ts                           # CORS, /api/v1 prefix, HTTP listener
   database/
-    migrations/                     # Initial project/repository schema migration
+    migrations/                     # Project/repository and analysis schema migrations
   projects/
     projects.controller.ts
     projects.module.ts
@@ -61,7 +61,7 @@ apps/backend/src/
   app.service.ts                    # Prototype workflow state used by WorkflowModule
 ```
 
-Every feature module has an `entities/` directory. Only the modules that currently persist relational data contain TypeORM entity classes; GitHub metadata is fetched from GitHub and workflow placeholders use JSON state, so their folders are reserved for future persistence models. No new `*.spec.ts` files are part of this structure change.
+Every feature module has an `entities/` directory. Only the modules that currently persist relational data contain TypeORM entity classes; GitHub metadata is fetched from GitHub and workflow placeholders use JSON state, so their folders are reserved for future persistence models.
 
 ## Entity model
 
@@ -213,49 +213,78 @@ All paths below are relative to `/api/v1`.
 - **simple-git / Git** clone repositories and verify immutable commit checkouts.
 - **BullMQ / Redis** run repository analysis outside the HTTP request and track its durable PostgreSQL status.
 - **Python / FastAPI / Tree-sitter** scan pinned source files and produce repository metadata and a bounded static graph.
-- **Docker Compose** runs PostgreSQL, Redis, the backend, AI service, and frontend for the local prototype. The current backend setup flow requires PostgreSQL; Redis and the AI service are available for later workflow implementation.
+- **Docker Compose** runs PostgreSQL, Redis, the backend, AI service, and frontend for the local prototype. Repository analysis uses Redis for its queue and the AI service for static scanning.
 
-## Run the application
+## End-to-end run session
 
-### Full Docker stack (recommended)
+This is the recommended way to start and use the whole prototype. Run the commands from the repository root in Windows PowerShell. Install and start Docker Desktop first.
 
-From the repository root in PowerShell:
+### 1. Prepare local configuration
+
+Create the ignored local environment file only if you do not already have one:
 
 ```powershell
-Copy-Item apps\backend\.env.example apps\backend\.env
-# Add GitHub App values to apps\backend\.env if private repository access is needed.
+if (-not (Test-Path apps\backend\.env)) {
+  Copy-Item apps\backend\.env.example apps\backend\.env
+}
+```
+
+Public GitHub access works without a token, subject to GitHub's shared rate limit. For higher public API quotas, set `GITHUB_TOKEN` only in `apps\backend\.env`. For private repositories, configure the GitHub App values described in [Configuration](#configuration). Never put credentials in `.env.example` or commit `apps\backend\.env`.
+
+### 2. Start all services
+
+```powershell
 docker compose --env-file apps\backend\.env up --build -d
 docker compose ps
 ```
 
-The Compose file starts PostgreSQL, Redis, the NestJS backend, the FastAPI AI service, and the React frontend. Service ports are bound to localhost:
+Wait until each service reports `healthy` or `running`. Compose starts PostgreSQL, Redis, the NestJS backend, the FastAPI AI service, and the React frontend. The ports are bound to localhost:
 
-- Frontend: `http://localhost:5173`
-- Backend health: `http://localhost:4000/api/v1/health`
-- AI service health: `http://localhost:8000/health`
+- Frontend: [http://localhost:5173](http://localhost:5173)
+- Backend health: [http://localhost:4000/api/v1/health](http://localhost:4000/api/v1/health)
+- AI service health: [http://localhost:8000/health](http://localhost:8000/health)
 - PostgreSQL: `localhost:5432`
 - Redis: `localhost:6379`
 
-Follow logs with `docker compose logs -f backend frontend ai-service`. Stop the stack with `docker compose down`; this keeps database and artifact volumes. `docker compose down -v` also deletes persisted volumes.
-
-### Backend on the host
-
-Prerequisites: Node.js 22, npm, and a reachable PostgreSQL database. The example database settings match the Compose PostgreSQL service.
+Check the health endpoints from PowerShell if needed:
 
 ```powershell
-Copy-Item apps\backend\.env.example apps\backend\.env
-docker compose --env-file apps\backend\.env up -d postgres
-npm install
-npm --prefix apps/backend run start:dev
+Invoke-RestMethod http://localhost:4000/api/v1/health
+Invoke-RestMethod http://localhost:8000/health
+Invoke-WebRequest -UseBasicParsing http://localhost:5173/health
 ```
 
-The backend listens at `http://localhost:4000/api/v1`. To run the frontend in another terminal, use `npm --prefix apps/frontend run dev`. Optional AI service commands and its dependencies are documented in `apps/ai-service/`.
+### 3. Use the application
 
-### Build and tests
+1. Open [http://localhost:5173](http://localhost:5173) and create a project.
+2. Add a repository using GitHub search or its HTTPS URL. Load branches, choose a branch and commit, set the component role, then select **Add repository**. This saves repository metadata and the baseline selection; it does not clone files.
+3. On the repository row, select **Clone snapshot** and wait for the snapshot to become `ready`. The checkout is pinned to the selected full commit SHA and stored in the Docker artifact volume.
+4. Select **Analyze** for that repository and start an analysis. The page shows the queued/running/completed state and keeps previous reports in analysis history.
+5. In a completed report, use **Overview**, **Feature map**, **File structure**, and **Module map** to inspect the saved snapshot. The maps are based on detected source directories (including nested layouts such as `backend/src` and `frontend/src`); the scanner does not execute repository code or infer product features with an LLM.
+
+Reports are immutable records of their analyzed snapshot and analyzer version. If you select a different commit or want to use an updated analyzer, start a new analysis; an older saved report is not rewritten.
+
+### 4. Logs and shutdown
 
 ```powershell
-npm --prefix apps/backend run build
-npm --prefix apps/backend run test -- --runInBand
+docker compose logs -f backend ai-service frontend
+```
+
+Stop following logs with `Ctrl+C`; this does not stop the containers. To stop the application and keep database and repository data:
+
+```powershell
+docker compose down
+```
+
+`docker compose down -v` also deletes the PostgreSQL, Redis, and artifact volumes. Use it only when you intentionally want to erase local application data.
+
+### Development commands and tests
+
+For host-based development, the root scripts are `npm run dev:backend`, `npm run dev:frontend`, and `npm run dev:ai`. Run PostgreSQL and Redis with Compose; repository analysis also requires the AI service and shared artifact storage, so use the full Docker session above for end-to-end verification.
+
+```powershell
+npm run build
+npm run test
 ```
 
 ## Configuration
@@ -269,7 +298,7 @@ Backend configuration is read from `apps/backend/.env` (copy `.env.example` firs
 | `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_SLUG` | Optional GitHub App access for private repositories |
 | `GITHUB_TOKEN` | Optional PAT for higher GitHub REST API quota when using public repositories |
 | `ARTIFACT_STORAGE_PATH` | Local workflow/repository artifact directory |
-| `AI_SERVICE_URL` | AI service URL for later integration |
+| `AI_SERVICE_URL` | Internal URL of the Python repository-analysis service |
 
 The example leaves `GITHUB_TOKEN` blank. Without authentication, GitHub limits public REST API requests by the shared client IP; set a token only in `apps/backend/.env` to authenticate public repository search, branch, and commit requests. Keep the token local and do not commit it. If GitHub rejects configured credentials, the API returns an actionable upstream error instead of a generic 500. Revoke and replace any credential that has been committed or shared. The token is not used to access private repositories; private repository access continues to require the GitHub App allowlist.
 
