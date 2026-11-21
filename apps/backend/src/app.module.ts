@@ -5,12 +5,14 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bullmq';
 import { AppController } from './app.controller';
 import { InitialProjectsAndRepositories1710000000000 } from './database/migrations/1710000000000-InitialProjectsAndRepositories';
+import { CreateAgentsTables1710000000001 } from './database/migrations/1710000000001-CreateAgentsTables';
 import { RepositoryAnalyses1795280400000 } from './database/migrations/1795280400000-RepositoryAnalyses';
 import { AnalysisModule } from './analysis/analysis.module';
 import { GitHubModule } from './github/github.module';
 import { ProjectsModule } from './projects/projects.module';
 import { RepositoriesModule } from './repositories/repositories.module';
 import { WorkflowModule } from './workflow/workflow.module';
+import { AgentsModule } from './agents/agents.module';
 
 @Module({
   imports: [
@@ -37,6 +39,7 @@ import { WorkflowModule } from './workflow/workflow.module';
         migrations: [
           InitialProjectsAndRepositories1710000000000,
           RepositoryAnalyses1795280400000,
+          CreateAgentsTables1710000000001
         ],
         migrationsRun: true,
         synchronize: true,
@@ -49,6 +52,7 @@ import { WorkflowModule } from './workflow/workflow.module';
     AnalysisModule,
     GitHubModule,
     WorkflowModule,
+    AgentsModule,
   ],
   controllers: [AppController],
 })
