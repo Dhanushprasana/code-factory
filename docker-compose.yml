@@ -1,0 +1,119 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: forgebench-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DATABASE_NAME:-forgebench}
+      POSTGRES_USER: ${DATABASE_USER:-forgebench}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-local_dev_password}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-forgebench} -d ${DATABASE_NAME:-forgebench}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    container_name: forgebench-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  ai-service:
+    build:
+      context: .
+      dockerfile: apps/ai-service/Dockerfile
+    container_name: forgebench-ai
+    restart: unless-stopped
+    environment:
+      APP_ENV: development
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - artifacts:/workspace/storage:ro
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
+    container_name: forgebench-backend
+    restart: unless-stopped
+    env_file:
+      - path: ./apps/backend/.env.example
+        required: true
+      - path: ./apps/backend/.env
+        required: false
+    environment:
+      HOST: 0.0.0.0
+      PORT: "4000"
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: ${DATABASE_NAME:-forgebench}
+      DATABASE_USER: ${DATABASE_USER:-forgebench}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-local_dev_password}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      AI_SERVICE_URL: http://ai-service:8000
+      ARTIFACT_STORAGE_PATH: storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ai-service:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:4000:4000"
+    volumes:
+      - artifacts:/workspace/storage
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:4000/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: apps/frontend/Dockerfile
+    container_name: forgebench-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:5173:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:
+  artifacts:

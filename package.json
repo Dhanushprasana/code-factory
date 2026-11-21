@@ -1,0 +1,12 @@
+{
+  "name": "code-factory",
+  "private": true,
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "dev:backend": "npm --prefix apps/backend run start:dev",
+    "dev:frontend": "npm --prefix apps/frontend run dev",
+    "dev:ai": "cd apps/ai-service && uv run uvicorn app.main:app --reload --port 8000",
+    "build": "npm --prefix apps/backend run build && npm --prefix apps/frontend run build",
+    "test": "npm --prefix apps/backend run test -- --runInBand && cd apps/ai-service && uv run pytest"
+  }
+}
