@@ -1,6 +1,7 @@
 import {
   Injectable,
   BadRequestException,
+  BadGatewayException,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -267,8 +268,18 @@ export class GitHubService {
           'GitHub API rate limit exceeded. Set GITHUB_TOKEN in apps/backend/.env or retry after the public quota resets.',
         );
       }
+      if (this.isAuthenticationFailure(error)) {
+        throw new BadGatewayException(
+          'GitHub rejected the configured credentials. Check the GitHub App settings or replace GITHUB_TOKEN in apps/backend/.env. Leave it blank for unauthenticated public repository access.',
+        );
+      }
       throw error;
     }
+  }
+
+  private isAuthenticationFailure(error: unknown): error is GitHubHttpError {
+    return typeof error === 'object' && error !== null && 'status' in error &&
+      error.status === 401;
   }
 
   private isRateLimited(error: unknown): error is GitHubHttpError {

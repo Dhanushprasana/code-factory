@@ -5,14 +5,14 @@ import json
 import os
 import re
 import tomllib
-from collections import Counter
+from collections import Counter, deque
 from pathlib import Path
 from typing import Any
 
 from tree_sitter_language_pack import get_parser
 
 
-ANALYZER_VERSION = "0.1.0"
+ANALYZER_VERSION = "0.1.1"
 MAX_FILES = 25_000
 MAX_METADATA_SOURCE_FILES = 15_000
 MAX_SOURCE_FILES = 5_000
@@ -184,24 +184,45 @@ def _is_test_source(path: Path, root: Path) -> bool:
 
 def _directory_tree(paths: list[Path], root: Path) -> tuple[list[dict[str, str]], bool]:
     entries: list[dict[str, str]] = []
-    directories: set[str] = set()
+    included_directories: set[str] = set()
+    all_directories: set[str] = set()
+    included_files = 0
+    grouped_paths: dict[str, deque[Path]] = {}
     for path in paths:
+        parts = path.relative_to(root).parts
+        group = "/".join(parts[:2]) if len(parts) > 2 else parts[0]
+        grouped_paths.setdefault(group, deque()).append(path)
+    balanced_paths: list[Path] = []
+    while True:
+        added_path = False
+        for group in grouped_paths.values():
+            if group:
+                balanced_paths.append(group.popleft())
+                added_path = True
+        if not added_path:
+            break
+    for path in balanced_paths:
         relative = _relative(path, root)
         parent = Path(relative).parent
+        ancestors: list[str] = []
         while str(parent) not in ("", "."):
-            directories.add(parent.as_posix())
+            directory = parent.as_posix()
+            ancestors.append(directory)
+            all_directories.add(directory)
             parent = parent.parent
-        if len(entries) + len(directories) >= MAX_TREE_ENTRIES:
-            break
-    for directory in sorted(directories):
-        entries.append({"path": directory, "type": "directory"})
-        if len(entries) >= MAX_TREE_ENTRIES:
-            return entries, True
-    for path in paths:
-        if len(entries) >= MAX_TREE_ENTRIES:
-            return entries, True
+        missing_directories = [
+            directory for directory in reversed(ancestors)
+            if directory not in included_directories
+        ]
+        if len(entries) + len(missing_directories) + 1 > MAX_TREE_ENTRIES:
+            continue
+        for directory in missing_directories:
+            included_directories.add(directory)
+            entries.append({"path": directory, "type": "directory"})
         entries.append({"path": _relative(path, root), "type": "file"})
-    return entries, len(entries) >= MAX_TREE_ENTRIES
+        included_files += 1
+    truncated = included_files < len(paths) or included_directories != all_directories
+    return entries, truncated
 
 
 def _add_graph_node(
@@ -515,18 +536,36 @@ def _detect_language_counts(files: list[Path]) -> dict[str, int]:
     return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
 
 
-def _source_directories(files: list[Path], root: Path) -> list[dict[str, str]]:
-    roots = {"app", "apps", "packages", "src", "modules"}
-    modules: set[tuple[str, str]] = set()
+def _source_directories(files: list[Path], root: Path) -> list[dict[str, Any]]:
+    workspace_roots = {"apps", "packages"}
+    source_roots = {"app", "src", "modules"}
+    modules: Counter[tuple[str, str]] = Counter()
     for path in files:
-        relative = path.relative_to(root)
-        if len(relative.parts) > 1 and relative.parts[0].lower() in roots:
-            module_path = Path(relative.parts[0]) / relative.parts[1]
+        parts = path.relative_to(root).parts
+        module_parts = None
+        for index, part in enumerate(parts[:-1]):
+            if part.lower() in workspace_roots and index + 1 < len(parts) - 1:
+                module_parts = parts[:index + 2]
+                break
+        if module_parts is None:
+            for index in range(len(parts) - 2, -1, -1):
+                if parts[index].lower() not in source_roots:
+                    continue
+                child_index = index + 1
+                if child_index < len(parts) - 1:
+                    module_parts = parts[:child_index + 1]
+                elif index > 0:
+                    module_parts = parts[:index]
+                else:
+                    module_parts = parts[:index + 1]
+                break
+        if module_parts:
+            module_path = Path(*module_parts)
             if (root / module_path).is_dir():
-                modules.add((module_path.name, module_path.as_posix()))
+                modules[(module_path.name, module_path.as_posix())] += 1
     return [
-        {"name": name, "path": module_path}
-        for name, module_path in sorted(modules, key=lambda value: value[1].lower())
+        {"name": name, "path": module_path, "file_count": count}
+        for (name, module_path), count in sorted(modules.items(), key=lambda value: value[0][1].lower())
     ]
 
 
@@ -841,6 +880,17 @@ def analyze_repository(
         }
     ][:100]
     modules = _source_directories(files, root)
+    for module in modules:
+        prefix = f"{module['path']}/"
+        module["api_route_count"] = sum(
+            route["file_path"].startswith(prefix) for route in routes
+        )
+        module["database_entity_count"] = sum(
+            entity["file_path"].startswith(prefix) for entity in database_entities
+        )
+        module["test_file_count"] = sum(
+            test_file.startswith(prefix) for test_file in test_files
+        )
     feature_headings = _readme_features(root, warnings)
     if not feature_headings:
         feature_headings = [

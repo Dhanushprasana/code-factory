@@ -86,7 +86,7 @@ export class AnalysisService {
         snapshotId: snapshot.id,
         commitSha: snapshot.commitSha,
         status: 'queued',
-        analyzerVersion: '0.1.0',
+        analyzerVersion: '0.1.1',
         warnings: [],
       }),
     );

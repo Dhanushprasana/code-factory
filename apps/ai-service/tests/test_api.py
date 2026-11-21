@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 from pathlib import Path
 import tempfile
 
+from app.analyzers import repository_analyzer
 from app.main import app
 
 
@@ -118,6 +119,87 @@ def test_analysis_extracts_tree_structure_symbols_routes_and_entities():
         assert "PRIVATE_TOKEN" not in response.text
         assert any(edge["type"] == "contains" for edge in payload["report"]["graph"]["edges"])
         assert any(edge["type"] == "calls" for edge in payload["report"]["graph"]["edges"])
+
+
+def test_directory_tree_keeps_file_entries_within_configured_limit(tmp_path, monkeypatch):
+    paths = []
+    for folder in ("group-a", "group-b", "group-c"):
+        directory = tmp_path / "src" / folder
+        directory.mkdir(parents=True)
+        path = directory / "module.ts"
+        path.write_text("export const value = true;", encoding="utf-8")
+        paths.append(path)
+
+    monkeypatch.setattr(repository_analyzer, "MAX_TREE_ENTRIES", 6)
+    entries, truncated = repository_analyzer._directory_tree(paths, tmp_path)
+
+    assert len(entries) <= 6
+    assert any(entry["type"] == "file" for entry in entries)
+    assert truncated
+
+
+def test_analysis_reports_module_file_route_entity_and_test_counts():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        module = root / "packages" / "commerce"
+        (module / "src").mkdir(parents=True)
+        (module / "tests").mkdir()
+        (module / "src" / "api.ts").write_text(
+            "@Entity()\nexport class ProductEntity {}\n@Get('/products')\nexport function listProducts() {}",
+            encoding="utf-8",
+        )
+        (module / "tests" / "api.test.ts").write_text("test('lists products', () => {});", encoding="utf-8")
+        response = client.post("/api/v1/analyze", json={
+            "repository_id": "repo-modules",
+            "snapshot_id": "snapshot-modules",
+            "commit_sha": "abc1234",
+            "repository_path": directory,
+            "ecosystem": "node-typescript",
+        })
+
+        assert response.status_code == 200
+        module_summary = next(item for item in response.json()["summary"]["modules"] if item["path"] == "packages/commerce")
+        assert module_summary["file_count"] == 2
+        assert module_summary["api_route_count"] == 1
+        assert module_summary["database_entity_count"] == 1
+        assert module_summary["test_file_count"] == 1
+
+
+def test_analysis_detects_modules_under_nested_backend_and_frontend_source_roots():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        backend_module = root / "backend" / "src" / "orders"
+        frontend_module = root / "frontend" / "src" / "pages"
+        backend_module.mkdir(parents=True)
+        frontend_module.mkdir(parents=True)
+        (backend_module / "orders.controller.ts").write_text(
+            "@Controller('orders')\n@Get('/orders')\nexport function listOrders() { return []; }",
+            encoding="utf-8",
+        )
+        (frontend_module / "OrdersPage.tsx").write_text(
+            "export function OrdersPage() { return null; }",
+            encoding="utf-8",
+        )
+
+        response = client.post("/api/v1/analyze", json={
+            "repository_id": "repo-nested-modules",
+            "snapshot_id": "snapshot-nested-modules",
+            "commit_sha": "abc1234",
+            "repository_path": directory,
+            "ecosystem": "node-typescript",
+        })
+
+        assert response.status_code == 200
+        payload = response.json()
+        module_paths = {module["path"] for module in payload["summary"]["modules"]}
+        assert module_paths == {"backend/src/orders", "frontend/src/pages"}
+        assert {feature["source"] for feature in payload["summary"]["features"]} == module_paths
+        backend_summary = next(
+            module for module in payload["report"]["modules"]
+            if module["path"] == "backend/src/orders"
+        )
+        assert backend_summary["file_count"] == 1
+        assert backend_summary["api_route_count"] == 1
 
 
 def test_analysis_detects_python_stack_routes_and_models():
