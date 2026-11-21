@@ -4,10 +4,12 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AppController } from './app.controller';
 import { InitialProjectsAndRepositories1710000000000 } from './database/migrations/1710000000000-InitialProjectsAndRepositories';
+import { CreateAgentsTables1710000000001 } from './database/migrations/1710000000001-CreateAgentsTables';
 import { GitHubModule } from './github/github.module';
 import { ProjectsModule } from './projects/projects.module';
 import { RepositoriesModule } from './repositories/repositories.module';
 import { WorkflowModule } from './workflow/workflow.module';
+import { AgentsModule } from './agents/agents.module';
 
 @Module({
   imports: [
@@ -25,7 +27,7 @@ import { WorkflowModule } from './workflow/workflow.module';
         password: config.get<string>('DATABASE_PASSWORD', 'local_dev_password'),
         database: config.get<string>('DATABASE_NAME', 'forgebench'),
         autoLoadEntities: true,
-        migrations: [InitialProjectsAndRepositories1710000000000],
+        migrations: [InitialProjectsAndRepositories1710000000000, CreateAgentsTables1710000000001],
         migrationsRun: true,
         synchronize: true,
         retryAttempts: 5,
@@ -36,6 +38,7 @@ import { WorkflowModule } from './workflow/workflow.module';
     RepositoriesModule,
     GitHubModule,
     WorkflowModule,
+    AgentsModule,
   ],
   controllers: [AppController],
 })

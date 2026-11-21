@@ -50,11 +50,6 @@ export class WorkflowController {
     return this.appService.exportPackage(id);
   }
 
-  @Get('agents')
-  agents() {
-    return this.appService.agents();
-  }
-
   @Post('tasks/:id/agents/execute')
   executeAgents(@Param('id') id: string, @Body() body: any) {
     return this.appService.executeAgents(id, body);
