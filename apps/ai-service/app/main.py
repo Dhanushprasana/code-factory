@@ -1,8 +1,13 @@
 from fastapi import FastAPI
+from fastapi import HTTPException
 from pydantic import BaseModel, Field
 from pathlib import Path
-import json
-import re
+import os
+
+from app.analyzers.repository_analyzer import (
+    ANALYZER_VERSION,
+    analyze_repository as scan_repository,
+)
 
 app = FastAPI(title="ForgeBench AI Service", version="0.1.0")
 
@@ -13,6 +18,7 @@ class HealthResponse(BaseModel):
 
 
 class AnalysisRequest(BaseModel):
+    operation_id: str | None = None
     repository_id: str
     snapshot_id: str
     commit_sha: str
@@ -24,6 +30,7 @@ class AnalysisResponse(BaseModel):
     operation_id: str
     status: str
     summary: dict
+    report: dict = Field(default_factory=dict)
     artifact_refs: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
@@ -44,98 +51,38 @@ def health() -> HealthResponse:
 
 @app.post("/api/v1/analyze", response_model=AnalysisResponse)
 def analyze_repository(request: AnalysisRequest) -> AnalysisResponse:
-    repository_path = Path(request.repository_path)
-    warnings: list[str] = []
-    languages: list[str] = []
-    frameworks: list[str] = []
-    modules: list[str] = []
-    test_commands: list[str] = []
-    entry_points: list[str] = []
-    dependencies: dict[str, object] = {}
-
-    if not repository_path.exists():
-        warnings.append("Repository snapshot path was not available; summary is incomplete.")
-        return AnalysisResponse(
-            operation_id=request.repository_id,
-            status="failed",
-            summary={"commit_sha": request.commit_sha},
-            warnings=warnings,
+    allowed_root = os.getenv("REPOSITORY_SCAN_ROOT")
+    if allowed_root:
+        root = Path(request.repository_path).resolve()
+        try:
+            root.relative_to(Path(allowed_root).resolve(strict=True))
+        except ValueError as error:
+            raise HTTPException(
+                status_code=400,
+                detail="Repository snapshot path is outside the configured scan root.",
+            ) from error
+        except OSError as error:
+            raise HTTPException(
+                status_code=400,
+                detail="Configured repository scan root is unavailable.",
+            ) from error
+    try:
+        result = scan_repository(
+            repository_path=request.repository_path,
+            repository_id=request.repository_id,
+            snapshot_id=request.snapshot_id,
+            commit_sha=request.commit_sha,
+            ecosystem=request.ecosystem,
         )
-
-    files = [
-        path for path in repository_path.rglob("*")
-        if path.is_file()
-        and not any(part in {".git", "node_modules", ".venv", "dist", "build"} for part in path.parts)
-    ]
-    if any(path.suffix == ".ts" or path.suffix == ".tsx" for path in files):
-        languages.append("TypeScript")
-    if any(path.suffix == ".js" or path.suffix == ".jsx" for path in files):
-        languages.append("JavaScript")
-    if any(path.suffix == ".py" for path in files):
-        languages.append("Python")
-
-    package_json = repository_path / "package.json"
-    if package_json.exists():
-        try:
-            package = json.loads(package_json.read_text(encoding="utf-8"))
-            dependencies.update({"dependencies": package.get("dependencies", {})})
-            scripts = package.get("scripts", {})
-            for name in ("test", "build", "lint", "typecheck"):
-                if name in scripts:
-                    test_commands.append(f"npm run {name}")
-            frameworks.extend(
-                name for name in ("React", "NestJS", "Next.js", "Express")
-                if name.lower() in json.dumps(package).lower()
-            )
-        except (json.JSONDecodeError, OSError):
-            warnings.append("package.json was present but could not be parsed.")
-
-    pyproject = repository_path / "pyproject.toml"
-    if pyproject.exists():
-        try:
-            text = pyproject.read_text(encoding="utf-8")
-            dependencies.update({"python": re.findall(r'^\s*([A-Za-z0-9_.-]+)\s*[>=<~]', text, re.MULTILINE)})
-            if "fastapi" in text.lower():
-                frameworks.append("FastAPI")
-            if "django" in text.lower():
-                frameworks.append("Django")
-            test_commands.append("pytest")
-        except OSError:
-            warnings.append("pyproject.toml was present but could not be parsed.")
-
-    source_dirs = [repository_path / name for name in ("src", "app", "apps", "packages")]
-    for source_dir in source_dirs:
-        if source_dir.exists():
-            for path in source_dir.iterdir():
-                if path.is_dir():
-                    modules.append(path.name)
-    modules = sorted(set(modules))
-
-    for filename in ("src/main.ts", "src/main.tsx", "app/main.py", "main.py"):
-        if (repository_path / filename).exists():
-            entry_points.append(filename)
-
-    if not languages:
-        warnings.append("No supported source language was detected.")
-    if not test_commands:
-        warnings.append("No standard test command was detected.")
-
+    except (FileNotFoundError, NotADirectoryError, ValueError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     return AnalysisResponse(
-        operation_id=request.repository_id,
+        operation_id=request.operation_id or request.snapshot_id,
         status="completed",
-        summary={
-            "language": sorted(set(languages)),
-            "frameworks": sorted(set(frameworks)),
-            "modules": modules,
-            "test_commands": sorted(set(test_commands)),
-            "entry_points": entry_points,
-            "dependencies": dependencies,
-            "file_count": len(files),
-            "features": [],
-            "commit_sha": request.commit_sha,
-        },
+        summary=result["summary"],
+        report={"analyzer_version": ANALYZER_VERSION, **result["report"]},
         artifact_refs=[],
-        warnings=warnings,
+        warnings=result["warnings"],
     )
 
 

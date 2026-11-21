@@ -1,6 +1,6 @@
 # ForgeBench backend guide
 
-This guide describes the backend structure and runnable workflows implemented at the current project stage: project and repository setup, GitHub access, and pinned repository snapshots.
+This guide describes the backend structure and runnable workflows implemented at the current project stage: project and repository setup, GitHub access, pinned repository snapshots, and static repository analysis.
 
 ## Backend modules
 
@@ -11,6 +11,7 @@ The NestJS application is composed from domain modules. Controllers own their HT
 | `AppModule` | Application composition, global configuration, PostgreSQL connection, and health check | Owns the root TypeORM connection |
 | `ProjectsModule` | Create, list, update, and delete projects; return workspace counts | `projects/entities/project.entity.ts` |
 | `RepositoriesModule` | Associate repositories with projects, list associations, remove links, and clone snapshots | `repositories/entities/` |
+| `AnalysisModule` | Queue snapshot analysis, persist report history, and expose summaries and graph data | `analysis/entities/repository-analysis.entity.ts` |
 | `GitHubModule` | Public repository discovery and allowlisted GitHub App access; list branches and commits | No local entity; GitHub remains the source of repository metadata |
 | `WorkflowModule` | Existing task, package, agent, and evaluation API placeholders | No TypeORM entities; prototype state is stored in the artifact JSON file |
 
@@ -39,6 +40,13 @@ apps/backend/src/
       project-repository.entity.ts
       repository.entity.ts
       repository-snapshot.entity.ts
+  analysis/
+    analysis.controller.ts
+    analysis.module.ts
+    analysis.processor.ts
+    analysis.service.ts
+    entities/
+      repository-analysis.entity.ts
   github/
     github.controller.ts
     github.module.ts
@@ -64,12 +72,18 @@ ProjectEntity 1 ─── * ProjectRepositoryEntity * ─── 1 RepositoryEnti
                                                     |
                                                     *
                                          RepositorySnapshotEntity
+                                                    |
+                                                    1
+                                                    |
+                                                    *
+                                         RepositoryAnalysisEntity
 ```
 
 - **ProjectEntity** (`projects`) stores the project name, description, status, and timestamps.
 - **RepositoryEntity** (`repositories`) stores a GitHub repository's provider ID, owner/name, HTTPS clone URL, visibility, default branch, and timestamps. Its provider/remote ID pair is unique so one repository can be reused by multiple projects.
 - **ProjectRepositoryEntity** (`project_repositories`) links one project to one repository and stores that project's component role and selected branch/full commit SHA. A project/repository pair is unique.
 - **RepositorySnapshotEntity** (`repository_snapshots`) records a checkout attempt/result for a repository and exact commit SHA. The repository/commit pair is unique; the local checkout path is not returned by the API.
+- **RepositoryAnalysisEntity** (`repository_analyses`) records queued, running, completed, or failed analysis for one ready snapshot. It stores the source-grounded summary and report as JSONB, analyzer version, warnings, and any failure message.
 
 Deleting a project removes its project links through the database foreign key. Removing a repository from a project removes only that association. Repository records and snapshots are retained unless their owning repository is deleted.
 
@@ -155,6 +169,27 @@ Cloning starts only when the user clicks **Clone snapshot** on the saved reposit
 
 In the Docker setup, repository checkouts live in the shared `artifacts` volume at `/workspace/storage`; the AI service mounts that volume read-only. Private clone credentials are short-lived GitHub App installation tokens supplied to Git without embedding them in the clone URL or saving them in PostgreSQL.
 
+### Analyze a repository snapshot
+
+Analysis runs only for a successfully cloned (`ready`) snapshot. From a project's repository row, choose **Analyze**; the Repository Analysis page lets you select the same repository and start or revisit saved runs.
+
+1. The frontend calls `POST /api/v1/repositories/:repositoryId/analyze` with the selected full `commitSha`.
+2. The backend verifies the repository and a matching ready snapshot, creates a `RepositoryAnalysisEntity` with status `queued`, and places its ID on the `repository-analysis` BullMQ queue. If there is already a queued or running analysis for that snapshot, the existing run is returned instead of adding a duplicate.
+3. The BullMQ worker marks it `running`, verifies that the snapshot checkout is under artifact storage, and sends a structured request to the Python AI service at `POST /api/v1/analyze`. The AI service mounts the artifact volume read-only; it never executes repository code, installs project dependencies, or runs build/test commands.
+4. The Python scanner walks the pinned checkout with explicit bounds (maximum filesystem entries, route/entity scan files, Tree-sitter-parsed source files, file size, total source bytes, and report graph/tree size). It skips VCS/dependency/build directories, generated files, common secrets/environment files, and binary/large files.
+5. The report is based on repository contents and manifests. It includes file/language counts, package managers and direct dependencies, detected frameworks and ORMs, configured build/test commands, entry points, source modules, README headings, route/entity declarations with file/line evidence, and a bounded directory tree. Tree-sitter parses JavaScript, TypeScript/TSX, and Python to extract symbols, imports, statically identifiable calls, and inheritance relationships into a dependency graph.
+6. On success, the worker stores the summary, report, warnings, and analyzer version in `repository_analyses` and marks the run `completed`. On an error it stores a useful error message and marks the run `failed`; the UI polls the run and shows the status/report.
+
+Analysis API routes (relative to `/api/v1`):
+
+- `POST /repositories/:id/analyze` — start or reuse an analysis for the selected commit SHA.
+- `GET /repositories/:id/analyses` — list up to 100 recent analysis runs for a repository.
+- `GET /analyses/:id` — get status, summary, full report, warnings, and failure message.
+- `GET /analyses/:id/summary` — get the completed summary.
+- `GET /analyses/:id/graph` — get the completed static dependency graph.
+
+The current report is deterministic static analysis; it does not call an LLM. Coverage percentages are not inferred from test-file names. The UI shows test files and configured commands, but does not execute tests or claim test coverage. Embedding generation, vector persistence/semantic search, and separate relational graph-node/edge tables remain future work; the current bounded graph is persisted as part of the JSONB report.
+
 ## HTTP API ownership
 
 All paths below are relative to `/api/v1`.
@@ -165,6 +200,7 @@ All paths below are relative to `/api/v1`.
 | `ProjectsController` | `GET /dashboard`, `GET /projects`, `POST /projects`, `GET /projects/:id`, `PATCH /projects/:id`, `DELETE /projects/:id` |
 | `GitHubController` | `GET /github/install-url`, `GET /github/repositories`, `GET /github/repositories/:owner/:name/branches`, `GET /github/repositories/:owner/:name/commits?branch=...` |
 | `RepositoriesController` | `GET /repositories`, `GET /projects/:id/repositories`, `POST /projects/:id/repositories`, `DELETE /projects/:id/repositories/:repositoryId`, `POST /projects/:id/repositories/:repositoryId/snapshots` |
+| `AnalysisController` | `POST /repositories/:id/analyze`, `GET /repositories/:id/analyses`, `GET /analyses/:id`, `GET /analyses/:id/summary`, `GET /analyses/:id/graph` |
 | `WorkflowController` | Task, package, agent, and evaluation placeholder endpoints; see the scope note above |
 
 ## Technology
@@ -173,6 +209,8 @@ All paths below are relative to `/api/v1`.
 - **TypeORM / PostgreSQL** persist projects, repository metadata, associations, and snapshot records.
 - **Octokit** handles public GitHub API calls and GitHub App installation authentication.
 - **simple-git / Git** clone repositories and verify immutable commit checkouts.
+- **BullMQ / Redis** run repository analysis outside the HTTP request and track its durable PostgreSQL status.
+- **Python / FastAPI / Tree-sitter** scan pinned source files and produce repository metadata and a bounded static graph.
 - **Docker Compose** runs PostgreSQL, Redis, the backend, AI service, and frontend for the local prototype. The current backend setup flow requires PostgreSQL; Redis and the AI service are available for later workflow implementation.
 
 ## Run the application

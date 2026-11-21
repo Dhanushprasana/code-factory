@@ -9,6 +9,7 @@ import {
 } from 'typeorm';
 import { ProjectRepositoryEntity } from './project-repository.entity';
 import { RepositorySnapshotEntity } from './repository-snapshot.entity';
+import { RepositoryAnalysisEntity } from '../../analysis/entities/repository-analysis.entity';
 
 @Entity({ name: 'repositories' })
 @Unique('uq_repositories_provider_external_id', ['provider', 'externalRepoId'])
@@ -45,6 +46,9 @@ export class RepositoryEntity {
 
   @OneToMany(() => RepositorySnapshotEntity, (snapshot) => snapshot.repository)
   snapshots: RepositorySnapshotEntity[];
+
+  @OneToMany(() => RepositoryAnalysisEntity, (analysis) => analysis.repository)
+  analyses: RepositoryAnalysisEntity[];
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
