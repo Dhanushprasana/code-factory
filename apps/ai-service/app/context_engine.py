@@ -153,6 +153,9 @@ def _source_chunks(
         )
         ranges: list[tuple[int, int, str]] = []
         if symbols:
+            first_symbol_start = max(1, int(symbols[0].get("start_line", 1)))
+            if first_symbol_start > 1:
+                ranges.append((1, min(first_symbol_start - 1, 40), "file prologue"))
             for symbol in symbols[:3]:
                 start = max(1, int(symbol.get("start_line", 1)))
                 end = min(len(lines), int(symbol.get("end_line", start)), start + 159)

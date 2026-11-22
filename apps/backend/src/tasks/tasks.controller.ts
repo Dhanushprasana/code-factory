@@ -1,9 +1,22 @@
-import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Logger,
+  Param,
+  Patch,
+  Post,
+  Query,
+  StreamableFile,
+} from '@nestjs/common';
+import { createReadStream, promises as fs } from 'fs';
 import { ReferenceSolutionsService } from './reference-solutions.service';
 import { TasksService } from './tasks.service';
 
 @Controller()
 export class TasksController {
+  private readonly logger = new Logger(TasksController.name);
+
   constructor(
     private readonly tasksService: TasksService,
     private readonly referenceSolutions: ReferenceSolutionsService,
@@ -67,6 +80,29 @@ export class TasksController {
   @Get('references/:id')
   reference(@Param('id') referenceId: string) {
     return this.referenceSolutions.get(referenceId);
+  }
+
+  @Post('references/:id/apply')
+  applyReference(@Param('id') referenceId: string) {
+    return this.referenceSolutions.applyPatches(referenceId);
+  }
+
+  @Get('references/:id/workspace/archive')
+  async downloadReferenceWorkspace(@Param('id') referenceId: string) {
+    const archive = await this.referenceSolutions.createWorkspaceArchive(referenceId);
+    const stream = createReadStream(archive.path);
+    stream.once('close', () => {
+      void fs.rm(archive.path).catch((error: unknown) => {
+        this.logger.error(
+          `Could not remove temporary reference archive ${archive.filename}.`,
+          error instanceof Error ? error.stack : undefined,
+        );
+      });
+    });
+    return new StreamableFile(stream, {
+      type: 'application/gzip',
+      disposition: `attachment; filename="${archive.filename}"`,
+    });
   }
 
   @Post('references/:id/validation')

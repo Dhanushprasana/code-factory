@@ -227,8 +227,8 @@ Both providers use the OpenAI-compatible `POST {baseUrl}/chat/completions` endpo
 
 | Provider | Default model / URL | Authentication and output format |
 | --- | --- | --- |
-| OpenRouter | `openai/gpt-4o-mini`; `https://openrouter.ai/api/v1` | Requires `OPENROUTER_API_KEY` as a bearer token. Requests JSON-object output, then ForgeBench validates the response. |
-| Ollama | `qwen2.5:7b`; `http://host.docker.internal:11434/v1` | No cloud API key. Requests a strict JSON schema that limits suggestion count and constrains categories, difficulties, affected modules, and evidence references to values from retrieved context. |
+| OpenRouter | `openai/gpt-4o-mini`; `https://openrouter.ai/api/v1` | Requires `OPENROUTER_API_KEY` as a bearer token. Requests strict JSON-schema output that limits suggestion count and constrains categories, difficulties, modules, and evidence fields to retrieved context. |
+| Ollama | `qwen2.5:7b`; `http://host.docker.internal:11434/v1` | No cloud API key. Requests the same strict JSON schema as OpenRouter. |
 
 For the optional Compose profile, set `OLLAMA_BASE_URL=http://ollama:11434/v1`. The verified local setup used `qwen2.5:3b`; the model tag is configurable. `OLLAMA_CONTEXT_LENGTH` defaults to 16,384. OpenRouter requests time out after 90 seconds and Ollama requests after 300 seconds; the backend allows 310 seconds for the AI-service call.
 
@@ -252,7 +252,9 @@ The model is expected to return a JSON object containing `tasks`. Each candidate
 
 The AI service rejects extra candidate fields and filters candidates with unsupported categories, invalid modules, fabricated evidence, or duplicate case-insensitive titles. Evidence must exactly match a retrieved chunk's repository, snapshot, commit, file, line range, and symbol. If no candidate remains after validation, generation fails rather than returning an ungrounded suggestion.
 
-The requested category is included in the prompt; validation ensures the returned category is supported but does not force it to equal the requested category. The requested difficulty is enforced by normalizing each accepted candidate to the selected difficulty. For Ollama, the strict output schema also limits the maximum number of returned suggestions; OpenRouter output is truncated to the requested count before candidates are validated.
+The requested category is included in the prompt; validation ensures the returned category is supported but does not force it to equal the requested category. The requested difficulty is enforced by normalizing each accepted candidate to the selected difficulty. Both providers receive a strict schema with the requested maximum suggestion count. Evidence field values are constrained to retrieved-context values by the schema, and ForgeBench still checks each complete evidence tuple against an actual retrieved chunk.
+
+If a model response violates the candidate schema, the AI service reports up to five invalid field paths and validation types without echoing model-generated values.
 
 ## Persistence and human review
 
@@ -319,7 +321,7 @@ Common failures:
 
 - **No completed analysis / snapshot unavailable:** clone the currently selected commit and complete its analysis first.
 - **No readable source context:** check that the analysis contains supported source files and that the AI service can read the snapshot volume.
-- **OpenRouter key missing or rejected:** set a valid `OPENROUTER_API_KEY` in the ignored local environment file and restart the AI service.
+- **OpenRouter key missing or rejected:** set a valid `OPENROUTER_API_KEY` in `apps/backend/.env`, then start or recreate the AI service with `docker compose --env-file apps\backend\.env ...`. The backend's service-level `env_file` does not automatically pass variables to the AI-service container.
 - **Ollama model not found:** pull the exact configured tag into the Ollama instance addressed by `OLLAMA_BASE_URL`.
 - **Invalid or ungrounded model response:** check provider/model compatibility and token budgets. ForgeBench returns an error instead of saving a task without validated repository evidence.
 - **Slow Ollama generation:** generation time depends on prompt size, hardware, model, context window, and output budget. A smaller model uses fewer resources but may produce lower-quality suggestions.

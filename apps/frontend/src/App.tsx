@@ -1619,7 +1619,20 @@ type ReferenceSolution = {
     content: string;
   }> | null;
   contextManifest: Record<string, any> | null;
-  validation: Record<string, any>;
+  validation: Record<string, any> & {
+    patch_preflight?: string;
+    apply_status?: string;
+    apply_error?: string | null;
+    workspace?: {
+      repositories?: Array<{
+        repository_id: string;
+        repository_name: string;
+        directory: string;
+        build_commands: string[];
+        test_commands: string[];
+      }>;
+    };
+  };
   reviewNote: string | null;
   errorMessage: string | null;
   createdAt: string;
@@ -1962,6 +1975,7 @@ function TaskLibraryPage() {
   }, [taskId, referenceSolutions]);
 
   const selectedReference = referenceSolutions.find(item => item.id === selectedReferenceId) ?? referenceSolutions[0];
+  const workspaceApplied = selectedReference?.validation.apply_status === 'applied';
 
   const saveChanges = async () => {
     if (!task) return;
@@ -2010,6 +2024,28 @@ function TaskLibraryPage() {
       setReferenceFeedback('');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Could not queue reference generation.');
+    } finally {
+      setReferenceBusy(false);
+    }
+  };
+  const applyReference = async () => {
+    if (!selectedReference) return;
+    setReferenceBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const updated = await request<ReferenceSolution>(`${apiUrl}/references/${selectedReference.id}/apply`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      setReferenceSolutions(current => current.map(item => item.id === updated.id ? updated : item));
+      setValidationBuild(updated.validation.build ?? 'not_run');
+      setValidationTests(updated.validation.tests ?? 'not_run');
+      setValidationNotes(updated.validation.notes ?? '');
+      setNotice('Patches and generated test files were applied to an isolated copy of the pinned snapshot.');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not apply reference patches.');
     } finally {
       setReferenceBusy(false);
     }
@@ -2091,7 +2127,7 @@ function TaskLibraryPage() {
       </div>
       <p className="reference-disclaimer">
         Uses the same OpenRouter or Ollama provider as the task generation and the task’s pinned snapshot.
-        Generated patches and tests are saved for review only; ForgeBench does not apply or execute them.
+        Patches can be applied to a separate copy of the pinned snapshot. ForgeBench does not change the original checkout or execute repository scripts.
       </p>
       <label className="reference-feedback">Generation feedback (optional)
         <textarea value={referenceFeedback} maxLength={2000} onChange={event => setReferenceFeedback(event.target.value)} placeholder="Use this to guide a revised reference after requesting changes." />
@@ -2117,6 +2153,15 @@ function TaskLibraryPage() {
           <span>Task v{selectedReference.taskVersion} · {selectedReference.provider}{selectedReference.model ? ` · ${selectedReference.model}` : ''} · {new Date(selectedReference.createdAt).toLocaleString()}</span>
         </div>
         {selectedReference.errorMessage && <div className="inline-notice error" role="alert">{selectedReference.errorMessage}</div>}
+        <p className="form-hint">
+          Pinned snapshot patch check: {selectedReference.validation.patch_preflight === 'passed'
+            ? 'passed before review'
+            : selectedReference.validation.patch_preflight === 'failed'
+              ? 'failed during generation'
+              : selectedReference.validation.patch_preflight === 'not_run'
+                ? 'not run yet'
+                : 'not recorded for this reference version'}
+        </p>
         {selectedReference.status === 'queued' || selectedReference.status === 'running'
           ? <p className="form-hint reference-disclaimer">Reference generation is running in the background. This panel refreshes automatically.</p>
           : selectedReference.status !== 'failed' && <>
@@ -2143,15 +2188,42 @@ function TaskLibraryPage() {
                 <pre>{test.content}</pre>
               </article>)}
             </details>
+            <section className="reference-apply">
+              <h3>Apply and validate in a review workspace</h3>
+              <p>
+                Apply checks the diff against the pinned snapshot and writes changes to a separate copy. The original snapshot stays unchanged.
+                Download the copy, review its dependency scripts, then run the suggested build/tests in your environment.
+              </p>
+              <div className="task-form-actions">
+                <button className="secondary-button" disabled={referenceBusy || selectedReference.status !== 'pending_review' || workspaceApplied} onClick={applyReference}>
+                  {referenceBusy ? 'Applying…' : workspaceApplied ? 'Patches applied' : 'Apply patches to review workspace'}
+                </button>
+                {workspaceApplied && <a className="secondary-button" href={`${apiUrl}/references/${selectedReference.id}/workspace/archive`}>
+                  Download workspace (.tar.gz)
+                </a>}
+              </div>
+              {selectedReference.validation.apply_error && <div className="inline-notice error" role="alert">{selectedReference.validation.apply_error}</div>}
+              {workspaceApplied && selectedReference.validation.workspace?.repositories?.map(repository => <div className="reference-command-list" key={repository.repository_id}>
+                <b>{repository.repository_name}</b>
+                <code>Folder: {repository.directory}</code>
+                <span>Build: {repository.build_commands.length ? repository.build_commands.join(' · ') : 'No build script detected'}</span>
+                <span>Tests: {repository.test_commands.length ? repository.test_commands.join(' · ') : 'No test script detected'}</span>
+              </div>)}
+              {workspaceApplied && <p className="form-hint">
+                ForgeBench does not install dependencies or execute these commands. Run them after reviewing the downloaded project scripts, then record the actual results below.
+              </p>}
+            </section>
             <section className="reference-validation">
               <h3>Validation record</h3>
-              <p>These are reviewer-recorded manual results. The generated patch and tests have not been run by ForgeBench.</p>
+              <p>{workspaceApplied
+                ? 'Record build and test results after running the commands in the downloaded review workspace.'
+                : 'Apply the patches to an isolated review workspace before recording build and test results.'}</p>
               <div className="field-grid">
-                <label>Build result<select value={validationBuild} onChange={event => setValidationBuild(event.target.value)}><option value="not_run">Not run</option><option value="passed">Passed</option><option value="failed">Failed</option></select></label>
-                <label>Test result<select value={validationTests} onChange={event => setValidationTests(event.target.value)}><option value="not_run">Not run</option><option value="passed">Passed</option><option value="failed">Failed</option></select></label>
+                <label>Build result<select disabled={!workspaceApplied} value={validationBuild} onChange={event => setValidationBuild(event.target.value)}><option value="not_run">Not run</option><option value="passed">Passed</option><option value="failed">Failed</option></select></label>
+                <label>Test result<select disabled={!workspaceApplied} value={validationTests} onChange={event => setValidationTests(event.target.value)}><option value="not_run">Not run</option><option value="passed">Passed</option><option value="failed">Failed</option></select></label>
               </div>
-              <label>Validation notes<textarea value={validationNotes} maxLength={2000} onChange={event => setValidationNotes(event.target.value)} placeholder="Record how and where the build and tests were checked." /></label>
-              <div className="task-form-actions"><button className="secondary-button" disabled={referenceBusy || selectedReference.status !== 'pending_review'} onClick={recordReferenceValidation}>Record manual validation</button></div>
+              <label>Validation notes<textarea disabled={!workspaceApplied} value={validationNotes} maxLength={2000} onChange={event => setValidationNotes(event.target.value)} placeholder="Record the workspace, commands, and actual build/test output." /></label>
+              <div className="task-form-actions"><button className="secondary-button" disabled={referenceBusy || selectedReference.status !== 'pending_review' || !workspaceApplied} onClick={recordReferenceValidation}>Record build/test results</button></div>
             </section>
             <section className="reference-review">
               <h3>Human review</h3>
@@ -2159,7 +2231,7 @@ function TaskLibraryPage() {
               <div className="task-form-actions">
                 <button className="secondary-button" disabled={referenceBusy || selectedReference.status !== 'pending_review'} onClick={() => reviewReference('request_changes')}>Request changes</button>
                 <button className="secondary-button" disabled={referenceBusy || selectedReference.status !== 'pending_review'} onClick={() => reviewReference('reject')}>Reject</button>
-                <button className="primary-button" disabled={referenceBusy || selectedReference.status !== 'pending_review' || selectedReference.validation.execution_mode !== 'manual_confirmation' || selectedReference.validation.build !== 'passed' || selectedReference.validation.tests !== 'passed'} onClick={() => reviewReference('approve')}>Approve reference</button>
+                <button className="primary-button" disabled={referenceBusy || selectedReference.status !== 'pending_review' || !workspaceApplied || selectedReference.validation.execution_mode !== 'manual_confirmation' || selectedReference.validation.build !== 'passed' || selectedReference.validation.tests !== 'passed'} onClick={() => reviewReference('approve')}>Approve reference</button>
               </div>
               {selectedReference.reviewNote && <p className="form-hint">Latest review note: {selectedReference.reviewNote}</p>}
             </section>

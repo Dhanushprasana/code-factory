@@ -1,4 +1,8 @@
 import { BadRequestException } from '@nestjs/common';
+import { createServer } from 'http';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 jest.mock('@nestjs/bullmq', () => ({ InjectQueue: () => () => undefined }));
 import { ReferenceSolutionsService } from './reference-solutions.service';
 
@@ -51,6 +55,357 @@ describe('ReferenceSolutionsService review gates', () => {
     );
   });
 
+  it.each([
+    {
+      name: 'corrupt',
+      patchDiff: (
+        'diff --git a/src/index.js b/src/index.js\n'
+        + '--- a/src/index.js\n+++ b/src/index.js\n'
+        + '@@ -1,1 +1,2 @@\n export const missing = true;\n+export const other = true;\n'
+      ),
+      expectedStatus: 'failed',
+      expectedPreflight: 'failed',
+      expectedError: 'does not apply',
+      expectedPatchDiff: undefined,
+      expectedRepairAttempts: 1,
+    },
+    {
+      name: 'applicable',
+      patchDiff: (
+        'diff --git a/src/index.js b/src/index.js\n'
+        + '--- a/src/index.js\n+++ b/src/index.js\n'
+        + "@@ -1 +1 @@\n-export const value = 'old';\n+export const value = 'new';\n"
+      ),
+      expectedStatus: 'pending_review',
+      expectedPreflight: 'passed',
+      expectedError: undefined,
+      expectedPatchDiff: (
+        'diff --git a/src/index.js b/src/index.js\n'
+        + '--- a/src/index.js\n+++ b/src/index.js\n'
+        + "@@ -1,1 +1,1 @@\n-export const value = 'old';\n+export const value = 'new';\n"
+      ),
+      expectedRepairAttempts: 0,
+    },
+    {
+      name: 'missing file headers and incorrect hunk counts',
+      patchDiff: (
+        'diff --git a/src/index.js b/src/index.js\n'
+        + "@@ -1,6 +1,10 @@\n-export const value = 'old';\n+export const value = 'new';\n"
+      ),
+      expectedStatus: 'pending_review',
+      expectedPreflight: 'passed',
+      expectedError: undefined,
+      expectedPatchDiff: (
+        'diff --git a/src/index.js b/src/index.js\n'
+        + '--- a/src/index.js\n+++ b/src/index.js\n'
+        + "@@ -1,1 +1,1 @@\n-export const value = 'old';\n+export const value = 'new';\n"
+      ),
+      expectedRepairAttempts: 0,
+    },
+    {
+      name: 'repairs a preflight failure once',
+      patchDiff: (
+        'diff --git a/src/index.js b/src/index.js\n'
+        + '--- a/src/index.js\n+++ b/src/index.js\n'
+        + "@@ -1 +1 @@\n-export const value = 'not-old';\n+export const value = 'new';\n"
+      ),
+      repairPatchDiff: (
+        'diff --git a/src/index.js b/src/index.js\n'
+        + '--- a/src/index.js\n+++ b/src/index.js\n'
+        + "@@ -1 +1 @@\n-export const value = 'old';\n+export const value = 'new';\n"
+      ),
+      expectedStatus: 'pending_review',
+      expectedPreflight: 'passed',
+      expectedError: undefined,
+      expectedPatchDiff: (
+        'diff --git a/src/index.js b/src/index.js\n'
+        + '--- a/src/index.js\n+++ b/src/index.js\n'
+        + "@@ -1,1 +1,1 @@\n-export const value = 'old';\n+export const value = 'new';\n"
+      ),
+      expectedRepairAttempts: 1,
+    },
+    {
+      name: 'repairs a file header incorrectly included as hunk context',
+      patchDiff: (
+        'diff --git a/src/index.js b/src/index.js\n'
+        + '--- a/src/index.js\n+++ b/src/index.js\n'
+        + '@@ -1,2 +1,2 @@\n-export const value = \'old\';\n+export const value = \'new\';\n'
+        + ' diff --git a/src/other.js b/src/other.js\n'
+        + '--- a/src/other.js\n+++ b/src/other.js\n'
+        + '@@ -1 +1 @@\n-const other = \'old\';\n+const other = \'new\';\n'
+      ),
+      expectedStatus: 'pending_review',
+      expectedPreflight: 'passed',
+      expectedError: undefined,
+      expectedPatchDiff: (
+        'diff --git a/src/index.js b/src/index.js\n'
+        + '--- a/src/index.js\n+++ b/src/index.js\n'
+        + "@@ -1,1 +1,1 @@\n-export const value = 'old';\n+export const value = 'new';\n"
+        + 'diff --git a/src/other.js b/src/other.js\n'
+        + '--- a/src/other.js\n+++ b/src/other.js\n'
+        + "@@ -1,1 +1,1 @@\n-const other = 'old';\n+const other = 'new';\n"
+      ),
+      expectedRepairAttempts: 0,
+    },
+    {
+      name: 'repairs overlapping hunk start positions',
+      patchDiff: (
+        'diff --git a/src/index.js b/src/index.js\n'
+        + '--- a/src/index.js\n+++ b/src/index.js\n'
+        + '@@ -1,2 +1,2 @@\n-first\n+FIRST\n second\n'
+        + '@@ -2,2 +2,2 @@\n-third\n+THIRD\n fourth\n'
+      ),
+      expectedStatus: 'pending_review',
+      expectedPreflight: 'passed',
+      expectedError: undefined,
+      expectedPatchDiff: (
+        'diff --git a/src/index.js b/src/index.js\n'
+        + '--- a/src/index.js\n+++ b/src/index.js\n'
+        + '@@ -1,2 +1,2 @@\n-first\n+FIRST\n second\n'
+        + '@@ -3,2 +3,2 @@\n-third\n+THIRD\n fourth\n'
+      ),
+      expectedRepairAttempts: 0,
+    },
+    {
+      name: 'repairs blank context lines missing their unified-diff prefix',
+      patchDiff: (
+        'diff --git a/src/index.js b/src/index.js\n'
+        + '--- a/src/index.js\n+++ b/src/index.js\n'
+        + '@@ -1,2 +1,3 @@\n one\n\n two\n+three\n'
+      ),
+      expectedStatus: 'pending_review',
+      expectedPreflight: 'passed',
+      expectedError: undefined,
+      expectedPatchDiff: (
+        'diff --git a/src/index.js b/src/index.js\n'
+        + '--- a/src/index.js\n+++ b/src/index.js\n'
+        + '@@ -1,3 +1,4 @@\n one\n \n two\n+three\n'
+      ),
+      expectedRepairAttempts: 0,
+    },
+    {
+      name: 'converts an added line to context when exact pinned neighbors prove it already exists',
+      patchDiff: (
+        'diff --git a/src/index.js b/src/index.js\n'
+        + '--- a/src/index.js\n+++ b/src/index.js\n'
+        + '@@ -1,3 +1,4 @@\n before\n+existing\n after\n-gone\n+GONE\n'
+      ),
+      expectedStatus: 'pending_review',
+      expectedPreflight: 'passed',
+      expectedError: undefined,
+      expectedPatchDiff: (
+        'diff --git a/src/index.js b/src/index.js\n'
+        + '--- a/src/index.js\n+++ b/src/index.js\n'
+        + '@@ -1,4 +1,4 @@\n before\n existing\n after\n-gone\n+GONE\n'
+      ),
+      expectedRepairAttempts: 0,
+    },
+    {
+      name: 'does not convert an addition when exact pinned neighbors do not prove it already exists',
+      patchDiff: (
+        'diff --git a/src/index.js b/src/index.js\n'
+        + '--- a/src/index.js\n+++ b/src/index.js\n'
+        + '@@ -1,3 +1,4 @@\n before\n+existing\n after\n-gone\n+GONE\n'
+      ),
+      repairPatchDiff: (
+        'diff --git a/src/index.js b/src/index.js\n'
+        + '--- a/src/index.js\n+++ b/src/index.js\n'
+        + '@@ -1,4 +1,4 @@\n before\n-other\n+existing\n after\n-gone\n+GONE\n'
+      ),
+      expectedStatus: 'pending_review',
+      expectedPreflight: 'passed',
+      expectedError: undefined,
+      expectedPatchDiff: (
+        'diff --git a/src/index.js b/src/index.js\n'
+        + '--- a/src/index.js\n+++ b/src/index.js\n'
+        + '@@ -1,4 +1,4 @@\n before\n-other\n+existing\n after\n-gone\n+GONE\n'
+      ),
+      expectedRepairAttempts: 1,
+    },
+    {
+      name: 'adds the required final newline when the model omits it',
+      patchDiff: (
+        'diff --git a/src/index.js b/src/index.js\n'
+        + '--- a/src/index.js\n+++ b/src/index.js\n'
+        + "@@ -1 +1 @@\n-export const value = 'old';\n+export const value = 'new';"
+      ),
+      expectedStatus: 'pending_review',
+      expectedPreflight: 'passed',
+      expectedError: undefined,
+      expectedPatchDiff: (
+        'diff --git a/src/index.js b/src/index.js\n'
+        + '--- a/src/index.js\n+++ b/src/index.js\n'
+        + "@@ -1,1 +1,1 @@\n-export const value = 'old';\n+export const value = 'new';\n"
+      ),
+      expectedRepairAttempts: 0,
+    },
+  ])('preflights generated patches before review: $name', async ({
+    name,
+    patchDiff,
+    repairPatchDiff,
+    expectedStatus,
+    expectedPreflight,
+    expectedError,
+    expectedPatchDiff,
+    expectedRepairAttempts,
+  }) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reference-preflight-'));
+    const snapshotPath = path.join(root, 'snapshots', 'repo-1');
+    fs.mkdirSync(path.join(snapshotPath, 'src'), { recursive: true });
+    const baselineContent = name === 'repairs overlapping hunk start positions'
+      ? 'first\nsecond\nthird\nfourth\n'
+      : name === 'repairs blank context lines missing their unified-diff prefix'
+        ? 'one\n\ntwo\n'
+      : name === 'converts an added line to context when exact pinned neighbors prove it already exists'
+        ? 'before\nexisting\nafter\ngone\n'
+      : name === 'does not convert an addition when exact pinned neighbors do not prove it already exists'
+        ? 'before\nother\nafter\ngone\n'
+      : "export const value = 'old';\n";
+    fs.writeFileSync(path.join(snapshotPath, 'src', 'index.js'), baselineContent);
+    if (expectedPatchDiff?.includes('src/other.js')) {
+      fs.writeFileSync(path.join(snapshotPath, 'src', 'other.js'), "const other = 'old';\n");
+    }
+    const reference: Record<string, any> = {
+      id: 'reference-corrupt',
+      status: 'queued',
+      taskVersion: 1,
+      provider: 'ollama',
+      input: {
+        projectId: 'project-1',
+        task: {
+          title: 'Update value',
+          description: 'Update the exported value.',
+          category: 'feature',
+          difficulty: 'easy',
+          requirements: [],
+          acceptanceCriteria: [],
+          constraints: [],
+          affectedModules: [],
+        },
+        baselineManifest: [{
+          repositoryId: 'repo-1',
+          snapshotId: 'snapshot-1',
+          analysisId: 'analysis-1',
+          commitSha: 'abc123',
+        }],
+      },
+      validation: { patch_preflight: 'not_run' },
+    };
+    const query = {
+      addSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      getOne: jest.fn().mockResolvedValue({ checkoutPath: snapshotPath }),
+    };
+    const references = {
+      findOneBy: jest.fn().mockResolvedValue(reference),
+      save: jest.fn(async (value) => value),
+    };
+    const aiResponse = {
+      operation_id: 'reference-corrupt',
+      status: 'pending_review',
+      provider: 'ollama',
+      model: 'qwen2.5:3b',
+      prompt_version: 'reference-factory-v6',
+      implementation_plan: [{ repository_id: 'repo-1', file_path: 'src/index.js' }],
+      patches: [{
+        repository_id: 'repo-1',
+        patch_diff: patchDiff,
+      }],
+      tests: [{ repository_id: 'repo-1', file_path: 'tests/index.test.js' }],
+      context_manifest: {},
+      validation: { patch_format: 'passed', test_files_present: 'passed' },
+    };
+    const requestBodies: Array<Record<string, any>> = [];
+    const repairResponse = repairPatchDiff
+      ? {
+        operation_id: 'reference-corrupt-repair',
+        status: 'pending_review',
+        provider: 'ollama',
+        model: 'qwen2.5:3b',
+        prompt_version: 'reference-factory-v8',
+        patches: [{ repository_id: 'repo-1', patch_diff: repairPatchDiff }],
+        context_manifest: {},
+      }
+      : aiResponse;
+    const server = createServer(async (request, response) => {
+      let body = '';
+      for await (const chunk of request) {
+        body += chunk.toString();
+      }
+      requestBodies.push(JSON.parse(body));
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify(requestBodies.length > 1 ? repairResponse : aiResponse));
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Could not start the AI-service test server.');
+    }
+    const service = Object.create(ReferenceSolutionsService.prototype) as ReferenceSolutionsService;
+    Object.assign(service, {
+      storagePath: root,
+      logger: { error: jest.fn(), warn: jest.fn() },
+      references,
+      config: { get: jest.fn().mockReturnValue(`http://127.0.0.1:${address.port}`) },
+      analyses: {
+        findOneBy: jest.fn().mockResolvedValue({
+          repositoryId: 'repo-1',
+          snapshotId: 'snapshot-1',
+          commitSha: 'abc123',
+          summary: {},
+          report: {},
+        }),
+      },
+      snapshots: { createQueryBuilder: jest.fn().mockReturnValue(query) },
+      repositories: { findOneBy: jest.fn().mockResolvedValue({ fullName: 'owner/repo' }) },
+    });
+
+    try {
+      await service.processGeneration(reference.id);
+
+      expect(reference.status).toBe(expectedStatus);
+      expect(reference.validation.patch_preflight).toBe(expectedPreflight);
+      expect(reference.validation.patch_repair_attempts ?? 0).toBe(expectedRepairAttempts);
+      if (expectedRepairAttempts > 0) {
+        if (requestBodies.length !== 2) {
+          throw new Error(`Expected one repair request. Final error: ${reference.errorMessage}`);
+        }
+        expect(requestBodies[1].patch_repair).toEqual(expect.objectContaining({
+          repository_id: 'repo-1',
+          patch_diff: expect.any(String),
+          preflight_error: expect.stringContaining('does not apply'),
+        }));
+        if (name === 'does not convert an addition when exact pinned neighbors do not prove it already exists') {
+          expect(requestBodies[1].patch_repair.patch_diff).toContain('\n+existing\n');
+        }
+      } else {
+        expect(requestBodies).toHaveLength(1);
+        expect(requestBodies[0].patch_repair).toBeUndefined();
+      }
+      if (expectedStatus === 'failed') {
+        expect(reference.errorMessage).toContain(expectedError);
+        expect(reference.patches[0].patch_diff).toBeDefined();
+        expect(reference.model).toBe('qwen2.5:3b');
+        expect(reference.promptVersion).toBe('reference-factory-v6');
+      } else {
+        expect(reference.errorMessage).toBeUndefined();
+        expect(reference.patches[0].patch_diff).toBe(expectedPatchDiff);
+      }
+      expect(fs.readFileSync(path.join(snapshotPath, 'src', 'index.js'), 'utf8'))
+        .toBe(baselineContent);
+      expect(fs.readdirSync(root).some((entry) => entry.startsWith('.reference-preflight-'))).toBe(false);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+      });
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('does not allow approval until a reviewer records passing build and test validation', async () => {
     const reference = {
       id: 'reference-1',
@@ -81,13 +436,182 @@ describe('ReferenceSolutionsService review gates', () => {
     expect(references.save).not.toHaveBeenCalled();
   });
 
+  it('requires an applied workspace before build or test results can be recorded', async () => {
+    const { service, references } = createService({
+      id: 'reference-1',
+      status: 'pending_review',
+      validation: { apply_status: 'not_applied', build: 'not_run', tests: 'not_run' },
+    });
+
+    await expect(service.recordValidation('reference-1', {
+      buildStatus: 'passed',
+      testStatus: 'passed',
+      notes: 'Ran build and tests.',
+    })).rejects.toThrow('Apply the patches to a review workspace');
+
+    expect(references.save).not.toHaveBeenCalled();
+  });
+
+  it('applies valid patches and generated tests to a copy of the pinned snapshot', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reference-apply-'));
+    try {
+      const snapshotPath = path.join(root, 'snapshots', 'repo-1');
+      fs.mkdirSync(path.join(snapshotPath, 'src'), { recursive: true });
+      fs.writeFileSync(path.join(snapshotPath, 'src', 'index.js'), "export const value = 'old';\n");
+      fs.writeFileSync(path.join(snapshotPath, 'package.json'), JSON.stringify({
+        scripts: { build: 'node build.js', test: 'node test.js' },
+      }));
+      const reference = {
+        id: 'reference-1',
+        status: 'pending_review',
+        input: {
+          baselineManifest: [{
+            repositoryId: 'repo-1',
+            snapshotId: 'snapshot-1',
+            analysisId: 'analysis-1',
+            commitSha: 'abc123',
+          }],
+        },
+        patches: [{
+          repository_id: 'repo-1',
+          patch_diff: (
+            'diff --git a/src/index.js b/src/index.js\n'
+            + '--- a/src/index.js\n+++ b/src/index.js\n'
+            + "@@ -1 +1 @@\n-export const value = 'old';\n+export const value = 'new';\n"
+          ),
+        }],
+        tests: [{
+          repository_id: 'repo-1',
+          file_path: 'tests/reference.test.js',
+          content: "import { value } from '../src/index.js';\n",
+        }],
+        validation: { build: 'not_run', tests: 'not_run', execution_mode: 'not_run' },
+      };
+      const query = {
+        addSelect: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getOne: jest.fn().mockResolvedValue({ checkoutPath: snapshotPath }),
+      };
+      const references = {
+        findOneBy: jest.fn().mockResolvedValue(reference),
+        save: jest.fn(async (value) => value),
+      };
+      const service = Object.create(ReferenceSolutionsService.prototype) as ReferenceSolutionsService;
+      Object.assign(service, {
+        storagePath: root,
+        references,
+        analyses: {
+          findOneBy: jest.fn().mockResolvedValue({
+            repositoryId: 'repo-1',
+            snapshotId: 'snapshot-1',
+            commitSha: 'abc123',
+            summary: {},
+            report: {},
+          }),
+        },
+        snapshots: { createQueryBuilder: jest.fn().mockReturnValue(query) },
+        repositories: { findOneBy: jest.fn().mockResolvedValue({ fullName: 'owner/repo' }) },
+      });
+
+      const applied = await service.applyPatches('reference-1');
+      const workspace = path.join(root, 'reference-workspaces', 'reference-1', 'repositories', 'repo-1');
+
+      expect(applied.validation.apply_status).toBe('applied');
+      expect(fs.readFileSync(path.join(workspace, 'src', 'index.js'), 'utf8').replace(/\r\n/g, '\n'))
+        .toBe("export const value = 'new';\n");
+      expect(fs.readFileSync(path.join(workspace, 'tests', 'reference.test.js'), 'utf8'))
+        .toContain("import { value }");
+      expect(applied.validation.workspace.repositories[0].build_commands).toEqual(['npm run build']);
+      expect(applied.validation.workspace.repositories[0].test_commands).toEqual(['npm test']);
+      expect(fs.readFileSync(path.join(snapshotPath, 'src', 'index.js'), 'utf8').replace(/\r\n/g, '\n'))
+        .toBe("export const value = 'old';\n");
+      const archive = await service.createWorkspaceArchive('reference-1');
+      expect(archive.filename).toBe('reference-reference-1-workspace.tar.gz');
+      expect(fs.statSync(archive.path).size).toBeGreaterThan(0);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a patch that does not apply and leaves the pinned snapshot unchanged', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reference-apply-invalid-'));
+    try {
+      const snapshotPath = path.join(root, 'snapshots', 'repo-1');
+      fs.mkdirSync(path.join(snapshotPath, 'src'), { recursive: true });
+      fs.writeFileSync(path.join(snapshotPath, 'src', 'index.js'), "export const value = 'real';\n");
+      const reference = {
+        id: 'reference-invalid',
+        status: 'pending_review',
+        input: {
+          baselineManifest: [{
+            repositoryId: 'repo-1',
+            snapshotId: 'snapshot-1',
+            analysisId: 'analysis-1',
+            commitSha: 'abc123',
+          }],
+        },
+        patches: [{
+          repository_id: 'repo-1',
+          patch_diff: (
+            'diff --git a/src/index.js b/src/index.js\n'
+            + '--- a/src/index.js\n+++ b/src/index.js\n'
+            + '@@ -1 +1,2 @@\n-old line\n+new line\n'
+          ),
+        }],
+        tests: [],
+        validation: { build: 'not_run', tests: 'not_run', execution_mode: 'not_run' },
+      };
+      const query = {
+        addSelect: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getOne: jest.fn().mockResolvedValue({ checkoutPath: snapshotPath }),
+      };
+      const service = Object.create(ReferenceSolutionsService.prototype) as ReferenceSolutionsService;
+      Object.assign(service, {
+        storagePath: root,
+        references: {
+          findOneBy: jest.fn().mockResolvedValue(reference),
+          save: jest.fn(async (value) => value),
+        },
+        analyses: {
+          findOneBy: jest.fn().mockResolvedValue({
+            repositoryId: 'repo-1',
+            snapshotId: 'snapshot-1',
+            commitSha: 'abc123',
+            summary: {},
+            report: {},
+          }),
+        },
+        snapshots: { createQueryBuilder: jest.fn().mockReturnValue(query) },
+        repositories: { findOneBy: jest.fn().mockResolvedValue({ fullName: 'owner/repo' }) },
+      });
+
+      await expect(service.applyPatches('reference-invalid'))
+        .rejects.toThrow('does not apply cleanly to the pinned snapshot');
+
+      expect(reference.validation.apply_status).toBe('failed');
+      expect(fs.readFileSync(path.join(snapshotPath, 'src', 'index.js'), 'utf8'))
+        .toBe("export const value = 'real';\n");
+      expect(fs.existsSync(path.join(root, 'reference-workspaces', 'reference-invalid'))).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('requires notes for passing manual checks and approves only after both pass', async () => {
     const reference = {
       id: 'reference-1',
       status: 'pending_review',
       patches: [{ repository_id: 'repo-1', patch_diff: 'diff --git a/src/file.ts b/src/file.ts' }],
       tests: [{ file_path: 'test/file.spec.ts' }],
-      validation: { build: 'not_run', tests: 'not_run', execution_mode: 'not_run' },
+      validation: {
+        apply_status: 'applied',
+        build: 'not_run',
+        tests: 'not_run',
+        execution_mode: 'not_run',
+      },
     };
     const { service, references } = createService(reference);
 

@@ -8,6 +8,7 @@ import pytest
 
 from app import task_factory
 from app import reference_factory
+from app.context_engine import build_task_context
 from app.analyzers import repository_analyzer
 from app.main import app
 
@@ -247,6 +248,55 @@ def test_analysis_detects_python_stack_routes_and_models():
         assert payload["summary"]["database_entities"][0]["name"] == "Item"
 
 
+def test_task_context_includes_file_prologue_before_symbol_chunks(tmp_path):
+    source = tmp_path / "backend" / "product.service.ts"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "import { StockEntity } from './enities/product-stock.entity';\n"
+        "\n"
+        "export class ProductService {\n"
+        "  getStockLevels() { return this.stockRepository.find(); }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    repository = {
+        "repository_id": "repo-prologue",
+        "snapshot_id": "snapshot-prologue",
+        "analysis_id": "analysis-prologue",
+        "commit_sha": "abc123",
+        "repository_name": "sample/store",
+        "repository_path": str(tmp_path),
+        "summary": {"modules": []},
+        "report": {
+            "directory_tree": [{"path": "backend/product.service.ts", "type": "file"}],
+            "symbols": [{
+                "name": "ProductService",
+                "file_path": "backend/product.service.ts",
+                "start_line": 3,
+                "end_line": 5,
+            }],
+            "api_routes": [],
+            "database_entities": [],
+            "tests": {"files": []},
+            "graph": {"nodes": [], "edges": []},
+        },
+    }
+
+    context, manifest = build_task_context(
+        [repository],
+        "manage product stock",
+        "feature",
+        [],
+        4096,
+    )
+
+    chunks = context["repositories"][0]["chunks"]
+    prologue = next(chunk for chunk in chunks if chunk["symbol"] == "file prologue")
+    assert prologue["start_line"] == 1
+    assert "1: import { StockEntity } from './enities/product-stock.entity';" in prologue["content"]
+    assert manifest["repositories"][0]["retrieved_chunks"][0]["symbol"] == "file prologue"
+
+
 def _task_suggestion_request(repository_path: str, provider: str = "openrouter") -> dict:
     return {
         "operation_id": "task-generation-test",
@@ -297,6 +347,7 @@ def test_openrouter_suggestions_require_api_key(monkeypatch, tmp_path):
 
     assert response.status_code == 503
     assert "OPENROUTER_API_KEY" in response.json()["detail"]
+    assert "--env-file apps/backend/.env" in response.json()["detail"]
 
 
 @pytest.mark.parametrize(
@@ -343,14 +394,14 @@ def test_task_suggestion_uses_selected_provider_and_returns_provenance(
         assert selected_base_url == base_url
         assert selected_model == model
         assert selected_api_key == api_key
-        if provider == "ollama":
-            assert response_schema["properties"]["tasks"]["maxItems"] == 1
-            candidate_schema = response_schema["properties"]["tasks"]["items"]
-            assert candidate_schema["properties"]["category"]["enum"]
-            assert candidate_schema["properties"]["affected_modules"]["items"]["enum"]
-            assert candidate_schema["properties"]["evidence"]["items"]["enum"]
-        else:
-            assert response_schema is None
+        assert response_schema["properties"]["tasks"]["maxItems"] == 1
+        candidate_schema = response_schema["properties"]["tasks"]["items"]
+        assert candidate_schema["properties"]["category"]["enum"]
+        assert candidate_schema["properties"]["affected_modules"]["items"]["enum"]
+        evidence_schema = candidate_schema["properties"]["evidence"]["items"]
+        assert evidence_schema["type"] == "object"
+        assert evidence_schema["additionalProperties"] is False
+        assert evidence_schema["properties"]["file_path"]["enum"] == ["src/orders/service.py"]
         assert "cancel_order" in prompt
         assert "order_id" in prompt
         return json.dumps({
@@ -400,6 +451,33 @@ def test_task_suggestion_uses_selected_provider_and_returns_provenance(
     ]
 
 
+def test_task_schema_errors_report_field_paths_without_echoing_values(tmp_path):
+    source = tmp_path / "src" / "orders" / "service.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("def cancel_order(order_id):\n    return order_id\n", encoding="utf-8")
+    request = task_factory.TaskGenerationRequest.model_validate(
+        _task_suggestion_request(str(tmp_path)),
+    )
+    context, _ = build_task_context(
+        [repository.model_dump() for repository in request.repositories],
+        request.user_idea,
+        request.category,
+        request.constraints,
+        4096,
+    )
+
+    with pytest.raises(HTTPException) as error:
+        task_factory._validate_candidates(
+            [{"title": "private task title"}],
+            request,
+            context,
+        )
+
+    assert "Invalid fields:" in error.value.detail
+    assert "description (missing)" in error.value.detail
+    assert "private task title" not in error.value.detail
+
+
 @pytest.mark.parametrize(
     ("provider", "base_url", "model", "api_key"),
     [
@@ -407,6 +485,7 @@ def test_task_suggestion_uses_selected_provider_and_returns_provenance(
         ("ollama", "http://ollama.test:11434/v1", "test-local-model", None),
     ],
 )
+@pytest.mark.parametrize("repair_context", [False, True])
 def test_reference_generation_uses_task_provider_and_pinned_context(
     monkeypatch,
     tmp_path,
@@ -414,6 +493,7 @@ def test_reference_generation_uses_task_provider_and_pinned_context(
     base_url,
     model,
     api_key,
+    repair_context,
 ):
     source = tmp_path / "src" / "orders" / "service.py"
     source.parent.mkdir(parents=True)
@@ -421,6 +501,8 @@ def test_reference_generation_uses_task_provider_and_pinned_context(
         "def create_order(order):\n    return order\n",
         encoding="utf-8",
     )
+    if repair_context:
+        (tmp_path / ".env").write_text("repair-source-secret", encoding="utf-8")
     monkeypatch.setenv("OPENROUTER_BASE_URL", "https://openrouter.test/api/v1")
     monkeypatch.setenv("OPENROUTER_MODEL", "test/router-model")
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test:11434/v1")
@@ -446,13 +528,48 @@ def test_reference_generation_uses_task_provider_and_pinned_context(
         assert selected_api_key == api_key
         assert "Task version 2" in prompt
         assert "create_order" in prompt
-        assert "diff --git a/src/example.py b/src/example.py" in prompt
-        assert timeout_seconds == (600.0 if provider == "ollama" else 90.0)
-        if provider == "ollama":
-            assert response_schema["properties"]["tests"]["items"]["properties"]["test_type"]["enum"]
-            assert "$defs" not in json.dumps(response_schema)
+        if repair_context:
+            assert "one bounded repair" in prompt
+            assert "Do not return a unified diff" in prompt
+            assert "corrupt patch at line 49" in prompt
+            assert "diff --git a/src/orders/service.py b/src/orders/service.py" in prompt
+            assert '"status": "available"' in prompt
+            assert '"content": "def create_order(order):\\n    return order\\n"' in prompt
+            assert '"status": "excluded-sensitive"' in prompt
+            assert "repair-source-secret" not in prompt
         else:
-            assert response_schema is None
+            assert "diff --git a/<path> b/<path>" in prompt
+            assert "must begin in column 1" in prompt
+            assert "ordered and non-overlapping" in prompt
+            assert "even a blank context line must contain its leading space" in prompt
+            assert "Do not include placeholder changes" in prompt
+        assert timeout_seconds == (1200.0 if provider == "ollama" else 90.0)
+        if repair_context:
+            assert response_schema == reference_factory._patch_repair_response_schema({
+                "src/orders/service.py",
+            })
+        else:
+            assert response_schema == reference_factory._reference_response_schema({"repository-task-test"})
+            assert response_schema["properties"]["patches"]["items"]["properties"]["repository_id"]["enum"] == [
+                "repository-task-test",
+            ]
+        if provider == "ollama":
+            if not repair_context:
+                assert response_schema["properties"]["tests"]["items"]["properties"]["test_type"]["enum"]
+            assert "$defs" not in json.dumps(response_schema)
+        if repair_context:
+            return json.dumps({
+                "files": [{
+                    "file_path": "src/orders/service.py",
+                    "action": "modify",
+                    "content": (
+                        "def create_order(order):\n"
+                        "    if not order:\n"
+                        "        raise ValueError('order is required')\n"
+                        "    return order\n"
+                    ),
+                }],
+            })
         return json.dumps({
             "implementation_plan": [{
                 "repository_id": "repository-task-test",
@@ -479,7 +596,7 @@ def test_reference_generation_uses_task_provider_and_pinned_context(
         })
 
     monkeypatch.setattr(reference_factory, "_request_chat_completions", fake_provider)
-    response = client.post("/api/v1/references/generate", json={
+    request_body = {
         "operation_id": "reference-run-1",
         "project_id": "project-task-test",
         "provider": provider,
@@ -521,17 +638,113 @@ def test_reference_generation_uses_task_provider_and_pinned_context(
                 "graph": {"nodes": [], "edges": []},
             },
         }],
-    })
+    }
+    if repair_context:
+        request_body["patch_repair"] = {
+            "repository_id": "repository-task-test",
+            "patch_diff": (
+                "diff --git a/src/orders/service.py b/src/orders/service.py\n"
+                "--- a/src/orders/service.py\n+++ b/src/orders/service.py\n"
+                "@@ -1 +1 @@\n-def create_order(order): return order\n"
+                "+def create_order(order): return order\n"
+                "diff --git a/.env b/.env\n"
+                "--- a/.env\n+++ b/.env\n"
+            ),
+            "preflight_error": "corrupt patch at line 49",
+        }
+    response = client.post("/api/v1/references/generate", json=request_body)
 
     assert response.status_code == 200
     result = response.json()
     assert result["provider"] == provider
     assert result["model"] == model
     assert result["status"] == "pending_review"
-    assert result["implementation_plan"][0]["file_path"] == "src/orders/service.py"
     assert result["patches"][0]["repository_id"] == "repository-task-test"
-    assert result["tests"][0]["test_type"] == "feature"
-    assert result["validation"]["build"] == "not_run"
+    assert result["prompt_version"] == "reference-factory-v8"
+    if repair_context:
+        assert "diff --git a/src/orders/service.py b/src/orders/service.py" in result["patches"][0]["patch_diff"]
+        assert "+    if not order:" in result["patches"][0]["patch_diff"]
+        assert "implementation_plan" not in result
+    else:
+        assert result["implementation_plan"][0]["file_path"] == "src/orders/service.py"
+        assert result["tests"][0]["test_type"] == "feature"
+        assert result["validation"]["build"] == "not_run"
+
+
+def test_reference_generation_schema_error_reports_fields_without_input_values():
+    with pytest.raises(HTTPException) as error:
+        reference_factory._validate_reference_output({
+            "implementation_plan": [{
+                "repository_id": "repository-task-test",
+                "file_path": "src/orders/service.py",
+                "rationale": "Change the order creation behavior.",
+                "steps": ["Update validation."],
+                "private_model_output": "do-not-echo",
+            }],
+            "patches": [{
+                "repository_id": "repository-task-test",
+                "patch_diff": "x" * 30,
+            }],
+            "tests": [{
+                "repository_id": "repository-task-test",
+                "file_path": "tests/test_order.py",
+                "test_type": "feature",
+                "purpose": "Verify the order behavior.",
+                "content": "def test_order():\n    assert True\n",
+            }],
+        }, {"repository-task-test"})
+
+    assert "implementation_plan.0.action (missing)" in error.value.detail
+    assert "private_model_output" in error.value.detail
+    assert "do-not-echo" not in error.value.detail
+
+
+@pytest.mark.parametrize(
+    ("patches", "expected_error"),
+    [
+        (
+            [{
+                "repository_id": "unknown-repository",
+                "patch_diff": (
+                    "diff --git a/src/orders/service.py b/src/orders/service.py\n"
+                    "--- a/src/orders/service.py\n+++ b/src/orders/service.py\n"
+                    "@@ -1 +1 @@\n-old\n+new\n"
+                ),
+            }],
+            "unknown repository",
+        ),
+        (
+            [{
+                "repository_id": "repository-task-test",
+                "patch_diff": (
+                    "diff --git a/src/orders/service.py b/src/orders/service.py\n"
+                    "--- a/src/orders/service.py\n+++ b/src/orders/service.py\n"
+                    "@@ -1 +1 @@\n-old\n+new\n"
+                ),
+            }] * 2,
+            "multiple patch bundles",
+        ),
+    ],
+)
+def test_reference_generation_rejects_unknown_or_duplicate_patch_repositories(patches, expected_error):
+    with pytest.raises(HTTPException, match=expected_error):
+        reference_factory._validate_reference_output({
+            "implementation_plan": [{
+                "repository_id": "repository-task-test",
+                "file_path": "src/orders/service.py",
+                "action": "modify",
+                "rationale": "Change order behavior.",
+                "steps": ["Update validation."],
+            }],
+            "patches": patches,
+            "tests": [{
+                "repository_id": "repository-task-test",
+                "file_path": "tests/test_order.py",
+                "test_type": "feature",
+                "purpose": "Verify the order behavior.",
+                "content": "def test_order():\n    assert True\n",
+            }],
+        }, {"repository-task-test"})
 
 
 def test_reference_generation_rejects_patch_path_traversal():
@@ -561,11 +774,26 @@ def test_reference_generation_rejects_patch_path_traversal():
         }, {"repository-task-test"})
 
 
+def test_reference_generation_rejects_placeholder_patch_content():
+    with pytest.raises(HTTPException, match="placeholder patch content"):
+        reference_factory._validate_patch_paths(
+            "diff --git a/src/file.ts b/src/file.ts\n"
+            "--- a/src/file.ts\n+++ b/src/file.ts\n"
+            "@@ -1 +1,2 @@\n-old line\n+new line\n",
+        )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("provider", "base_url", "api_key", "response_schema"),
     [
         ("openrouter", "https://openrouter.test/api/v1", "test-api-key", None),
+        (
+            "openrouter",
+            "https://openrouter.test/api/v1",
+            "test-api-key",
+            {"type": "object", "properties": {"result": {"type": "string"}}},
+        ),
         (
             "ollama",
             "http://ollama.test:11434/v1",
@@ -630,11 +858,15 @@ async def test_chat_completions_request_uses_provider_endpoint_and_auth(
         assert captured["payload"]["response_format"] == {
             "type": "json_schema",
             "json_schema": {
-                "name": "task_suggestions",
+                "name": "structured_response",
                 "strict": True,
                 "schema": response_schema,
             },
         }
+    if provider == "openrouter" and response_schema is not None:
+        assert captured["payload"]["provider"] == {"require_parameters": True}
+    else:
+        assert "provider" not in captured["payload"]
     assert captured["headers"].get("authorization") == (
         f"Bearer {api_key}" if api_key else None
     )
