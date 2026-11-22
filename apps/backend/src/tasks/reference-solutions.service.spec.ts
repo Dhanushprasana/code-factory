@@ -407,7 +407,7 @@ describe('ReferenceSolutionsService review gates', () => {
   });
 
   it('does not allow approval until a reviewer records passing build and test validation', async () => {
-    const reference = {
+    const reference: Record<string, any> = {
       id: 'reference-1',
       status: 'pending_review',
       patches: [{ repository_id: 'repo-1', patch_diff: 'diff --git a/src/file.ts b/src/file.ts' }],
@@ -420,36 +420,66 @@ describe('ReferenceSolutionsService review gates', () => {
       .rejects.toThrow(BadRequestException);
   });
 
-  it('does not allow validation after a reference leaves pending review', async () => {
+  it('does not allow automatic execution after a reference leaves pending review', async () => {
     const { service, references } = createService({
       id: 'reference-1',
       status: 'changes_requested',
       validation: { build: 'not_run', tests: 'not_run', execution_mode: 'not_run' },
     });
 
-    await expect(service.recordValidation('reference-1', {
-      buildStatus: 'passed',
-      testStatus: 'passed',
-      notes: 'Checked locally.',
-    })).rejects.toThrow(BadRequestException);
+    await expect(service.executeValidation('reference-1')).rejects.toThrow(BadRequestException);
 
     expect(references.save).not.toHaveBeenCalled();
   });
 
-  it('requires an applied workspace before build or test results can be recorded', async () => {
+  it('requires an applied workspace before automatic execution can be queued', async () => {
     const { service, references } = createService({
       id: 'reference-1',
       status: 'pending_review',
       validation: { apply_status: 'not_applied', build: 'not_run', tests: 'not_run' },
     });
 
-    await expect(service.recordValidation('reference-1', {
-      buildStatus: 'passed',
-      testStatus: 'passed',
-      notes: 'Ran build and tests.',
-    })).rejects.toThrow('Apply the patches to a review workspace');
+    await expect(service.executeValidation('reference-1'))
+      .rejects.toThrow('Apply the patches to a review workspace');
 
     expect(references.save).not.toHaveBeenCalled();
+  });
+
+  it('discovers nested package manifests and builds prefixed npm commands', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reference-manifests-'));
+    try {
+      fs.mkdirSync(path.join(root, 'backend'), { recursive: true });
+      fs.mkdirSync(path.join(root, 'frontend'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'backend', 'package.json'), JSON.stringify({
+        scripts: { build: 'nest build', test: 'jest' },
+      }));
+      fs.writeFileSync(path.join(root, 'frontend', 'package.json'), JSON.stringify({
+        scripts: { build: 'vite build', test: 'vitest run' },
+      }));
+      const service = Object.create(ReferenceSolutionsService.prototype) as ReferenceSolutionsService;
+      const manifests = (service as any).findProjectManifests(root) as string[];
+      const commands = (service as any).suggestBuildAndTestCommands(root) as {
+        setup: string[][];
+        buildArgs: string[][];
+        testArgs: string[][];
+      };
+
+      expect(manifests).toHaveLength(2);
+      expect(commands.setup).toEqual([
+        ['npm', '--prefix', 'backend', 'install'],
+        ['npm', '--prefix', 'frontend', 'install'],
+      ]);
+      expect(commands.buildArgs).toEqual([
+        ['npm', '--prefix', 'backend', 'run', 'build'],
+        ['npm', '--prefix', 'frontend', 'run', 'build'],
+      ]);
+      expect(commands.testArgs).toEqual([
+        ['npm', '--prefix', 'backend', 'test'],
+        ['npm', '--prefix', 'frontend', 'test'],
+      ]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('applies valid patches and generated tests to a copy of the pinned snapshot', async () => {
@@ -524,6 +554,9 @@ describe('ReferenceSolutionsService review gates', () => {
         .toContain("import { value }");
       expect(applied.validation.workspace.repositories[0].build_commands).toEqual(['npm run build']);
       expect(applied.validation.workspace.repositories[0].test_commands).toEqual(['npm test']);
+      expect(applied.validation.workspace.repositories[0].setup_commands).toEqual([['npm', 'install']]);
+      expect(applied.validation.workspace.repositories[0].build_command_args).toEqual([['npm', 'run', 'build']]);
+      expect(applied.validation.workspace.repositories[0].test_command_args).toEqual([['npm', 'test']]);
       expect(fs.readFileSync(path.join(snapshotPath, 'src', 'index.js'), 'utf8').replace(/\r\n/g, '\n'))
         .toBe("export const value = 'old';\n");
       const archive = await service.createWorkspaceArchive('reference-1');
@@ -600,8 +633,8 @@ describe('ReferenceSolutionsService review gates', () => {
     }
   });
 
-  it('requires notes for passing manual checks and approves only after both pass', async () => {
-    const reference = {
+  it('queues isolated automatic execution and approves only with passing evidence', async () => {
+    const reference: Record<string, any> = {
       id: 'reference-1',
       status: 'pending_review',
       patches: [{ repository_id: 'repo-1', patch_diff: 'diff --git a/src/file.ts b/src/file.ts' }],
@@ -611,24 +644,146 @@ describe('ReferenceSolutionsService review gates', () => {
         build: 'not_run',
         tests: 'not_run',
         execution_mode: 'not_run',
+        workspace: {
+          status: 'applied',
+          repositories: [{
+            repository_id: 'repo-1',
+            setup_commands: [['npm', 'ci']],
+            build_command_args: [['npm', 'run', 'build']],
+            test_command_args: [['npm', 'test']],
+          }],
+        },
       },
     };
     const { service, references } = createService(reference);
-
-    await expect(service.recordValidation('reference-1', {
-      buildStatus: 'passed',
-      testStatus: 'passed',
-    })).rejects.toThrow(BadRequestException);
-
-    await service.recordValidation('reference-1', {
-      buildStatus: 'passed',
-      testStatus: 'passed',
-      notes: 'Reviewer ran the build and public tests in the pinned checkout.',
+    const queue = { add: jest.fn().mockResolvedValue(undefined) };
+    const validationResponse = {
+      run_id: 'runner-id',
+      status: 'passed',
+      execution_mode: 'automatic_container',
+      network_policy: 'disabled',
+      repositories: [{
+        repository_id: 'repo-1',
+        status: 'passed',
+        build_status: 'passed',
+        test_status: 'passed',
+        build: [{ command: ['npm', 'run', 'build'], status: 'passed', exit_code: 0, stdout: 'built' }],
+        tests: [{ command: ['npm', 'test'], status: 'passed', exit_code: 0, stdout: 'tests passed' }],
+      }],
+    };
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify(validationResponse));
     });
-    const approved = await service.review('reference-1', { action: 'approve' });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Could not start the validation runner test server.');
+    }
+    Object.assign(service, {
+      referenceQueue: queue,
+      config: {
+        get: jest.fn((key: string) => key === 'VALIDATION_RUNNER_URL'
+          ? `http://127.0.0.1:${address.port}`
+          : key === 'VALIDATION_RUNNER_TOKEN'
+            ? 'test-token'
+            : key === 'REFERENCE_VALIDATION_ALLOW_NETWORK'
+              ? 'false'
+              : undefined),
+      },
+    });
 
-    expect(approved.status).toBe('approved');
-    expect(reference.validation.execution_mode).toBe('manual_confirmation');
-    expect(references.save).toHaveBeenCalledTimes(2);
+    try {
+      const queued = await service.executeValidation('reference-1');
+      const runId = queued.validation.current_validation_run_id as string;
+      expect(queue.add).toHaveBeenCalledWith(
+        'validate',
+        { referenceId: 'reference-1', runId },
+        expect.objectContaining({ jobId: `validate-reference-1-${runId}` }),
+      );
+      await service.processValidation('reference-1', runId);
+
+      expect(reference.validation.build).toBe('passed');
+      expect(reference.validation.tests).toBe('passed');
+      expect(reference.validation.execution_mode).toBe('automatic_container');
+      expect(reference.validation.execution_runs[0].status).toBe('passed');
+      expect(reference.validation.execution_runs[0].repositories[0].tests[0].stdout).toBe('tests passed');
+      const approved = await service.review('reference-1', { action: 'approve' });
+      expect(approved.status).toBe('approved');
+      expect(references.save).toHaveBeenCalled();
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+      });
+    }
+  });
+
+  it('records failed command output and does not allow approval after a failed run', async () => {
+    const reference: Record<string, any> = {
+      id: 'reference-1',
+      status: 'pending_review',
+      patches: [{ repository_id: 'repo-1', patch_diff: 'diff --git a/src/file.ts b/src/file.ts' }],
+      tests: [{ file_path: 'test/file.spec.ts' }],
+      validation: {
+        apply_status: 'applied',
+        build: 'not_run',
+        tests: 'not_run',
+        execution_mode: 'not_run',
+        workspace: { status: 'applied', repositories: [{ repository_id: 'repo-1' }] },
+      },
+    };
+    const { service } = createService(reference);
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({
+        status: 'failed',
+        network_policy: 'disabled',
+        repositories: [{
+          repository_id: 'repo-1',
+          status: 'failed',
+          build_status: 'failed',
+          test_status: 'passed',
+          build: [{
+            command: ['npm', 'run', 'build'],
+            status: 'failed',
+            exit_code: 1,
+            stderr: 'Type error: missing export',
+          }],
+          tests: [{ command: ['npm', 'test'], status: 'passed', exit_code: 0 }],
+        }],
+      }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Could not start the validation runner test server.');
+    }
+    Object.assign(service, {
+      config: {
+        get: jest.fn((key: string) => key === 'VALIDATION_RUNNER_URL'
+          ? `http://127.0.0.1:${address.port}`
+          : key === 'VALIDATION_RUNNER_TOKEN'
+            ? 'test-token'
+            : key === 'REFERENCE_VALIDATION_ALLOW_NETWORK'
+              ? 'false'
+              : undefined),
+      },
+    });
+    const runId = 'run-failure';
+    reference.validation.execution_runs = [{ run_id: runId, status: 'queued' }];
+
+    try {
+      await service.processValidation('reference-1', runId);
+      expect(reference.validation.build).toBe('failed');
+      expect(reference.validation.tests).toBe('passed');
+      expect(reference.validation.execution_runs[0].repositories[0].build[0].stderr)
+        .toContain('missing export');
+      await expect(service.review('reference-1', { action: 'approve' }))
+        .rejects.toThrow('passing build and test execution evidence');
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+      });
+    }
   });
 });

@@ -105,9 +105,9 @@ export class TasksController {
     });
   }
 
-  @Post('references/:id/validation')
-  recordReferenceValidation(@Param('id') referenceId: string, @Body() body: Record<string, unknown>) {
-    return this.referenceSolutions.recordValidation(referenceId, body);
+  @Post('references/:id/validation/execute')
+  executeReferenceValidation(@Param('id') referenceId: string) {
+    return this.referenceSolutions.executeValidation(referenceId);
   }
 
   @Patch('references/:id/review')

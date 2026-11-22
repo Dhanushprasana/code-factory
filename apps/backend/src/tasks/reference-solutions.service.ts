@@ -25,10 +25,11 @@ import { TaskGenerationEntity } from './entities/task-generation.entity';
 import { TaskVersionEntity } from './entities/task-version.entity';
 
 type Provider = 'openrouter' | 'ollama';
-type BuildOrTestStatus = 'not_run' | 'passed' | 'failed';
+type BuildOrTestStatus = 'not_run' | 'passed' | 'failed' | 'blocked' | 'not_configured';
 const execFileAsync = promisify(execFile);
 const MAX_PATCH_REPAIR_CHARS = 30_000;
 const MAX_PATCH_REPAIR_ERROR_CHARS = 2_000;
+const MAX_VALIDATION_RUNS = 5;
 
 interface GenerateReferenceInput {
   reviewerFeedback?: unknown;
@@ -72,12 +73,6 @@ class GeneratedPatchPreflightError extends Error {
 interface ReviewInput {
   action?: unknown;
   note?: unknown;
-}
-
-interface ValidationInput {
-  buildStatus?: unknown;
-  testStatus?: unknown;
-  notes?: unknown;
 }
 
 @Injectable()
@@ -208,7 +203,47 @@ export class ReferenceSolutionsService {
     const existingWorkspace = reference.validation.workspace as { status?: string } | undefined;
     const workspaceRoot = this.workspacePath(reference.id);
     if (existingWorkspace?.status === 'applied' && fs.existsSync(workspaceRoot)) {
-      return reference;
+      const baselines = await this.resolveBaseline(reference.input.baselineManifest);
+      const baselineById = new Map(
+        baselines.map((baseline) => [baseline.repository_id as string, baseline]),
+      );
+      const workspaceData = reference.validation.workspace as {
+        status?: string;
+        applied_at?: string;
+        repositories?: Array<Record<string, unknown>>;
+      };
+      const refreshedRepositories = (workspaceData.repositories ?? []).map((repository) => {
+        const repositoryId = repository.repository_id as string;
+        const repositoryPath = path.join(workspaceRoot, 'repositories', repositoryId);
+        if (!baselineById.has(repositoryId) || !fs.existsSync(repositoryPath)) {
+          return repository;
+        }
+        const commands = this.suggestBuildAndTestCommands(repositoryPath);
+        const baseline = baselineById.get(repositoryId);
+        return {
+          repository_id: repositoryId,
+          repository_name: repository.repository_name ?? baseline?.repository_name,
+          directory: path.posix.join('repositories', repositoryId),
+          build_commands: commands.build,
+          test_commands: commands.tests,
+          setup_commands: commands.setup,
+          build_command_args: commands.buildArgs,
+          test_command_args: commands.testArgs,
+        };
+      });
+      reference.validation = {
+        ...reference.validation,
+        patch_preflight: 'passed',
+        build: 'not_run',
+        tests: 'not_run',
+        execution_mode: 'not_run',
+        workspace: {
+          ...workspaceData,
+          status: 'applied',
+          repositories: refreshedRepositories,
+        },
+      };
+      return this.references.save(reference);
     }
     if (fs.existsSync(workspaceRoot)) {
       throw new BadRequestException(
@@ -312,6 +347,9 @@ export class ReferenceSolutionsService {
           directory: path.posix.join('repositories', repositoryId),
           build_commands: commands.build,
           test_commands: commands.tests,
+          setup_commands: commands.setup,
+          build_command_args: commands.buildArgs,
+          test_command_args: commands.testArgs,
         });
       }
 
@@ -379,33 +417,161 @@ export class ReferenceSolutionsService {
     };
   }
 
-  async recordValidation(referenceId: string, input: ValidationInput) {
+  async executeValidation(referenceId: string) {
     const reference = await this.findReference(referenceId);
     if (reference.status !== 'pending_review') {
-      throw new BadRequestException('Only a generated reference awaiting review can be validated.');
+      throw new BadRequestException('Only a generated reference awaiting review can be executed.');
     }
     if (reference.validation.apply_status !== 'applied') {
-      throw new BadRequestException('Apply the patches to a review workspace before recording build or test results.');
+      throw new BadRequestException('Apply the patches to a review workspace before executing build or tests.');
     }
-    const buildStatus = this.validateCheckStatus(input.buildStatus, 'Build');
-    const testStatus = this.validateCheckStatus(input.testStatus, 'Test');
-    if (input.notes !== undefined &&
-      (typeof input.notes !== 'string' || input.notes.length > 2000)) {
-      throw new BadRequestException('Validation notes must be a string of at most 2,000 characters.');
+    const workspace = reference.validation.workspace as {
+      status?: string;
+      repositories?: Array<{ repository_id?: string }>;
+    } | undefined;
+    if (workspace?.status !== 'applied' || !workspace.repositories?.length) {
+      throw new BadRequestException('The applied review workspace is unavailable for execution.');
     }
-    const notes = typeof input.notes === 'string' ? input.notes.trim() : '';
-    if ((buildStatus === 'passed' || testStatus === 'passed') && !notes) {
-      throw new BadRequestException('Add notes describing how the passing build or tests were verified.');
+    const runs = Array.isArray(reference.validation.execution_runs)
+      ? reference.validation.execution_runs as Array<Record<string, unknown>>
+      : [];
+    if (runs.some((run) => run.status === 'queued' || run.status === 'running')) {
+      throw new BadRequestException('Build and test execution is already in progress.');
     }
+    const runId = randomUUID();
+    const run: Record<string, unknown> = {
+      run_id: runId,
+      status: 'queued',
+      requested_at: new Date().toISOString(),
+      execution_mode: 'automatic_container',
+    };
     reference.validation = {
       ...reference.validation,
-      build: buildStatus,
-      tests: testStatus,
-      execution_mode: 'manual_confirmation',
-      notes,
-      recorded_at: new Date().toISOString(),
+      build: 'not_run',
+      tests: 'not_run',
+      execution_mode: 'automatic_container',
+      current_validation_run_id: runId,
+      execution_runs: [run, ...runs].slice(0, MAX_VALIDATION_RUNS),
     };
-    return this.references.save(reference);
+    await this.references.save(reference);
+    try {
+      await this.referenceQueue.add(
+        'validate',
+        { referenceId, runId },
+        { jobId: `validate-${referenceId}-${runId}`, attempts: 1, removeOnComplete: 100, removeOnFail: 100 },
+      );
+    } catch (error) {
+      run.status = 'failed';
+      run.error = 'Validation execution could not be queued. Check the Redis connection and try again.';
+      run.completed_at = new Date().toISOString();
+      await this.references.save(reference);
+      this.logger.error(
+        `Could not enqueue validation run ${runId} for reference ${referenceId}.`,
+        error instanceof Error ? error.stack : undefined,
+      );
+      throw new ServiceUnavailableException(run.error as string);
+    }
+    return reference;
+  }
+
+  async processValidation(referenceId: string, runId: string) {
+    const reference = await this.references.findOneBy({ id: referenceId });
+    if (!reference || reference.status !== 'pending_review'
+      || reference.validation.apply_status !== 'applied') {
+      return;
+    }
+    const runs = Array.isArray(reference.validation.execution_runs)
+      ? reference.validation.execution_runs as Array<Record<string, unknown>>
+      : [];
+    const run = runs.find((item) => item.run_id === runId);
+    if (!run || run.status !== 'queued') {
+      return;
+    }
+    run.status = 'running';
+    run.started_at = new Date().toISOString();
+    await this.references.save(reference);
+
+    try {
+      const runnerUrl = this.config.get<string>('VALIDATION_RUNNER_URL');
+      const runnerToken = this.config.get<string>('VALIDATION_RUNNER_TOKEN');
+      if (!runnerUrl || !runnerToken) {
+        throw new ServiceUnavailableException(
+          'Automatic validation is not configured. Set VALIDATION_RUNNER_URL and VALIDATION_RUNNER_TOKEN.',
+        );
+      }
+      const workspace = reference.validation.workspace as {
+        repositories: Array<{
+          repository_id: string;
+          setup_commands?: string[][];
+          build_command_args?: string[][];
+          test_command_args?: string[][];
+        }>;
+      };
+      const response = await undiciRequest(`${runnerUrl.replace(/\/+$/, '')}/execute`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${runnerToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          reference_id: reference.id,
+          allow_network: this.config.get<string>('REFERENCE_VALIDATION_ALLOW_NETWORK') === 'true',
+          repositories: workspace.repositories.map((repository) => ({
+            repository_id: repository.repository_id,
+            setup_commands: (repository.setup_commands ?? []).map((args) => ({ args })),
+            build_commands: (repository.build_command_args ?? []).map((args) => ({ args })),
+            test_commands: (repository.test_command_args ?? []).map((args) => ({ args })),
+          })),
+        }),
+        headersTimeout: 1_800_000,
+        bodyTimeout: 1_800_000,
+      });
+      const result = await response.body.json() as Record<string, unknown>;
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        const detail = typeof result.detail === 'string'
+          ? result.detail
+          : `Validation runner returned HTTP ${response.statusCode}.`;
+        throw new Error(detail);
+      }
+      if (!Array.isArray(result.repositories)) {
+        throw new Error('The validation runner returned an invalid evidence response.');
+      }
+      const repositoryResults = result.repositories as Array<Record<string, unknown>>;
+      run.status = result.status === 'passed' ? 'passed' : 'failed';
+      run.environment = {
+        execution_mode: 'automatic_container',
+        network_policy: result.network_policy,
+        image: 'code-factory-validation:local',
+        repository_count: repositoryResults.length,
+      };
+      run.repositories = repositoryResults;
+      run.completed_at = new Date().toISOString();
+      reference.validation = {
+        ...reference.validation,
+        build: this.aggregateExecutionStatus(repositoryResults, 'build_status'),
+        tests: this.aggregateExecutionStatus(repositoryResults, 'test_status'),
+        execution_mode: 'automatic_container',
+        execution_runs: runs,
+      };
+      await this.references.save(reference);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Automatic validation failed unexpectedly.';
+      run.status = 'failed';
+      run.error = message.slice(0, 2000);
+      run.completed_at = new Date().toISOString();
+      reference.validation = {
+        ...reference.validation,
+        build: 'blocked',
+        tests: 'blocked',
+        execution_mode: 'automatic_container',
+        execution_runs: runs,
+      };
+      await this.references.save(reference);
+      this.logger.error(
+        `Automatic validation run ${runId} failed for reference ${referenceId}.`,
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
   }
 
   async review(referenceId: string, input: ReviewInput) {
@@ -429,11 +595,11 @@ export class ReferenceSolutionsService {
     } else if (input.action === 'approve') {
       if (!reference.patches?.length || !reference.tests?.length
         || reference.validation.apply_status !== 'applied'
-        || reference.validation.execution_mode !== 'manual_confirmation'
+        || reference.validation.execution_mode !== 'automatic_container'
         || reference.validation.build !== 'passed'
         || reference.validation.tests !== 'passed') {
         throw new BadRequestException(
-          'Approval requires a patch, generated tests, and recorded passing build and test validation.',
+          'Approval requires a patch, generated tests, and passing build and test execution evidence.',
         );
       }
       reference.status = 'approved';
@@ -900,40 +1066,180 @@ export class ReferenceSolutionsService {
     }
   }
 
+  private findProjectManifests(repositoryPath: string) {
+    const manifests = new Set([
+      'package.json',
+      'pyproject.toml',
+      'requirements.txt',
+      'pom.xml',
+      'build.gradle',
+      'build.gradle.kts',
+      'go.mod',
+      'Cargo.toml',
+      'Makefile',
+    ]);
+    const excludedDirectories = new Set([
+      '.git',
+      'node_modules',
+      '.venv',
+      'venv',
+      '__pycache__',
+      'dist',
+      'build',
+      'target',
+      '.gradle',
+      '.next',
+      '.turbo',
+    ]);
+    const found: string[] = [];
+    const visit = (directory: string, depth: number) => {
+      if (depth > 4) {
+        return;
+      }
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        if (entry.isSymbolicLink()) {
+          continue;
+        }
+        const entryPath = path.join(directory, entry.name);
+        if (entry.isDirectory()) {
+          if (!excludedDirectories.has(entry.name)) {
+            visit(entryPath, depth + 1);
+          }
+        } else if (entry.isFile() && manifests.has(entry.name)) {
+          found.push(entryPath);
+        }
+      }
+    };
+    visit(repositoryPath, 0);
+    return found.sort();
+  }
+
   private suggestBuildAndTestCommands(repositoryPath: string) {
     const build: string[] = [];
     const tests: string[] = [];
-    const packageJsonPath = path.join(repositoryPath, 'package.json');
-    if (fs.existsSync(packageJsonPath)) {
-      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')) as {
-        packageManager?: string;
-        scripts?: Record<string, unknown>;
-      };
-      const scripts = packageJson.scripts ?? {};
-      const packageManager = typeof packageJson.packageManager === 'string'
-        ? packageJson.packageManager.split('@')[0]
-        : fs.existsSync(path.join(repositoryPath, 'pnpm-lock.yaml'))
-          ? 'pnpm'
-          : fs.existsSync(path.join(repositoryPath, 'yarn.lock'))
-            ? 'yarn'
-            : 'npm';
-      if (typeof scripts.build === 'string') {
-        build.push(`${packageManager} run build`);
-      }
-      if (typeof scripts.test === 'string') {
-        tests.push(packageManager === 'npm' ? 'npm test' : `${packageManager} test`);
-      }
-    }
+    const setup: string[][] = [];
+    const buildArgs: string[][] = [];
+    const testArgs: string[][] = [];
+    const manifestFiles = this.findProjectManifests(repositoryPath);
 
-    if (fs.existsSync(path.join(repositoryPath, 'pyproject.toml'))
-      || fs.existsSync(path.join(repositoryPath, 'requirements.txt'))) {
-      build.push('python -m compileall -q .');
-      if (fs.existsSync(path.join(repositoryPath, 'tests'))
-        || fs.existsSync(path.join(repositoryPath, 'test'))) {
-        tests.push('python -m pytest');
+    for (const manifest of manifestFiles) {
+      if (path.basename(manifest) === 'package.json') {
+        const packageDirectory = path.dirname(manifest);
+        const prefix = path.relative(repositoryPath, packageDirectory).replace(/\\/g, '/');
+        const packageJson = JSON.parse(fs.readFileSync(manifest, 'utf8')) as {
+          packageManager?: string;
+          scripts?: Record<string, unknown>;
+        };
+        const scripts = packageJson.scripts ?? {};
+        const declaredPackageManager = typeof packageJson.packageManager === 'string'
+          ? packageJson.packageManager.split('@')[0]
+          : '';
+        const packageManager = ['npm', 'pnpm', 'yarn'].includes(declaredPackageManager)
+          ? declaredPackageManager
+          : fs.existsSync(path.join(packageDirectory, 'package-lock.json'))
+            ? 'npm'
+            : fs.existsSync(path.join(packageDirectory, 'pnpm-lock.yaml'))
+            ? 'pnpm'
+            : fs.existsSync(path.join(packageDirectory, 'yarn.lock'))
+              ? 'yarn'
+              : 'npm';
+        const prefixArgs = prefix && prefix !== '.'
+          ? ['--prefix', prefix]
+          : [];
+        if (packageManager === 'npm') {
+          setup.push([
+            'npm',
+            ...prefixArgs,
+            'install',
+          ]);
+        } else if (packageManager === 'pnpm') {
+          setup.push([
+            'pnpm',
+            '--dir',
+            prefix || '.',
+            'install',
+            fs.existsSync(path.join(packageDirectory, 'pnpm-lock.yaml')) ? '--frozen-lockfile' : '--no-frozen-lockfile',
+          ]);
+        } else {
+          setup.push([
+            'yarn',
+            '--cwd',
+            prefix || '.',
+            'install',
+            fs.existsSync(path.join(packageDirectory, '.yarnrc.yml')) ? '--immutable' : '--frozen-lockfile',
+          ]);
+        }
+        if (typeof scripts.build === 'string') {
+          build.push(`${packageManager}${prefix ? ` --prefix ${prefix}` : ''} run build`);
+          buildArgs.push(packageManager === 'npm'
+            ? ['npm', ...prefixArgs, 'run', 'build']
+            : [packageManager, ...(packageManager === 'pnpm'
+              ? ['--dir', prefix || '.', 'run', 'build']
+              : ['--cwd', prefix || '.', 'run', 'build'])]);
+        }
+        if (typeof scripts.test === 'string') {
+          const testCommand = `${packageManager}${prefix ? ` --prefix ${prefix}` : ''} test`;
+          tests.push(testCommand);
+          testArgs.push(packageManager === 'npm'
+            ? ['npm', ...prefixArgs, 'test']
+            : [packageManager, ...(packageManager === 'pnpm'
+              ? ['--dir', prefix || '.', 'test']
+              : ['--cwd', prefix || '.', 'test'])]);
+        }
+        continue;
+      }
+
+      const projectDirectory = path.dirname(manifest);
+      const prefix = path.relative(repositoryPath, projectDirectory).replace(/\\/g, '/');
+      if (path.basename(manifest) === 'pyproject.toml'
+        || path.basename(manifest) === 'requirements.txt') {
+        const virtualEnv = prefix && prefix !== '.'
+          ? path.posix.join(prefix, '.venv')
+          : '.venv';
+        setup.push(['python3', '-m', 'venv', '--system-site-packages', virtualEnv]);
+        if (path.basename(manifest) === 'requirements.txt') {
+          setup.push(['python3', '-m', 'pip', 'install', '-r', path.posix.join(prefix || '.', 'requirements.txt')]);
+        } else {
+          setup.push(['python3', '-m', 'pip', 'install', '-e', prefix || '.']);
+        }
+        build.push(`python -m compileall -q ${prefix || '.'}`);
+        buildArgs.push(['python', '-m', 'compileall', '-q', prefix || '.']);
+        if (fs.existsSync(path.join(projectDirectory, 'tests'))
+          || fs.existsSync(path.join(projectDirectory, 'test'))) {
+          tests.push(`python -m pytest ${prefix || '.'}`);
+          testArgs.push(['python', '-m', 'pytest', prefix || '.']);
+        }
+      } else if (path.basename(manifest) === 'go.mod') {
+        build.push(`go build ${prefix || '.'}`);
+        buildArgs.push(['go', 'build', prefix || '.']);
+        tests.push(`go test ${prefix || './...'}`);
+        testArgs.push(['go', 'test', prefix ? `${prefix}/...` : './...']);
+      } else if (path.basename(manifest) === 'Cargo.toml') {
+        build.push(`cargo build --manifest-path ${path.posix.join(prefix || '.', 'Cargo.toml')}`);
+        buildArgs.push(['cargo', 'build', '--manifest-path', path.posix.join(prefix || '.', 'Cargo.toml')]);
+        tests.push(`cargo test --manifest-path ${path.posix.join(prefix || '.', 'Cargo.toml')}`);
+        testArgs.push(['cargo', 'test', '--manifest-path', path.posix.join(prefix || '.', 'Cargo.toml')]);
+      } else if (path.basename(manifest) === 'pom.xml') {
+        build.push(`mvn -f ${path.posix.join(prefix || '.', 'pom.xml')} package`);
+        buildArgs.push(['mvn', '-f', path.posix.join(prefix || '.', 'pom.xml'), 'package']);
+        tests.push(`mvn -f ${path.posix.join(prefix || '.', 'pom.xml')} test`);
+        testArgs.push(['mvn', '-f', path.posix.join(prefix || '.', 'pom.xml'), 'test']);
+      } else if (path.basename(manifest) === 'build.gradle'
+        || path.basename(manifest) === 'build.gradle.kts') {
+        const gradlePrefix = prefix && prefix !== '.' ? ['-p', prefix] : [];
+        build.push(`gradle${gradlePrefix.length ? ` ${gradlePrefix.join(' ')}` : ''} build`);
+        buildArgs.push(['gradle', ...gradlePrefix, 'build']);
+        tests.push(`gradle${gradlePrefix.length ? ` ${gradlePrefix.join(' ')}` : ''} test`);
+        testArgs.push(['gradle', ...gradlePrefix, 'test']);
+      } else if (path.basename(manifest) === 'Makefile') {
+        const makePrefix = prefix && prefix !== '.' ? ['-C', prefix] : [];
+        build.push(`make${makePrefix.length ? ` ${makePrefix.join(' ')}` : ''} build`);
+        buildArgs.push(['make', ...makePrefix, 'build']);
+        tests.push(`make${makePrefix.length ? ` ${makePrefix.join(' ')}` : ''} test`);
+        testArgs.push(['make', ...makePrefix, 'test']);
       }
     }
-    return { build, tests };
+    return { build, tests, setup, buildArgs, testArgs };
   }
 
   private toReferenceTaskInput(task: Record<string, unknown>, taskVersion: number) {
@@ -966,11 +1272,20 @@ export class ReferenceSolutionsService {
     return reference;
   }
 
-  private validateCheckStatus(value: unknown, label: string): BuildOrTestStatus {
-    if (value !== 'not_run' && value !== 'passed' && value !== 'failed') {
-      throw new BadRequestException(`${label} status must be not_run, passed, or failed.`);
+  private aggregateExecutionStatus(
+    repositories: Array<Record<string, unknown>>,
+    field: 'build_status' | 'test_status',
+  ): BuildOrTestStatus {
+    const statuses = repositories.map((repository) => repository[field]);
+    if (statuses.includes('failed')) {
+      return 'failed';
     }
-    return value;
+    if (statuses.includes('blocked')) {
+      return 'blocked';
+    }
+    return statuses.length > 0 && statuses.every((status) => status === 'passed')
+      ? 'passed'
+      : 'not_configured';
   }
 
   private assertStoragePath(checkoutPath: string) {
