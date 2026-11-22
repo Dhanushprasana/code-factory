@@ -1,9 +1,13 @@
 import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { ReferenceSolutionsService } from './reference-solutions.service';
 import { TasksService } from './tasks.service';
 
 @Controller()
 export class TasksController {
-  constructor(private readonly tasksService: TasksService) {}
+  constructor(
+    private readonly tasksService: TasksService,
+    private readonly referenceSolutions: ReferenceSolutionsService,
+  ) {}
 
   @Get('projects/:id/task-context')
   projectContext(@Param('id') projectId: string) {
@@ -48,5 +52,30 @@ export class TasksController {
   @Patch('tasks/:id')
   update(@Param('id') taskId: string, @Body() body: Record<string, unknown>) {
     return this.tasksService.updateTask(taskId, body);
+  }
+
+  @Post('tasks/:id/references/generate')
+  generateReference(@Param('id') taskId: string, @Body() body: Record<string, unknown>) {
+    return this.referenceSolutions.generate(taskId, body);
+  }
+
+  @Get('tasks/:id/references')
+  references(@Param('id') taskId: string) {
+    return this.referenceSolutions.listForTask(taskId);
+  }
+
+  @Get('references/:id')
+  reference(@Param('id') referenceId: string) {
+    return this.referenceSolutions.get(referenceId);
+  }
+
+  @Post('references/:id/validation')
+  recordReferenceValidation(@Param('id') referenceId: string, @Body() body: Record<string, unknown>) {
+    return this.referenceSolutions.recordValidation(referenceId, body);
+  }
+
+  @Patch('references/:id/review')
+  reviewReference(@Param('id') referenceId: string, @Body() body: Record<string, unknown>) {
+    return this.referenceSolutions.review(referenceId, body);
   }
 }

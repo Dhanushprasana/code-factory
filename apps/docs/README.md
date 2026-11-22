@@ -1,6 +1,6 @@
 # ForgeBench backend guide
 
-This guide describes the backend structure and runnable workflows implemented at the current project stage: project and repository setup, GitHub access, pinned repository snapshots, static repository analysis, and AI-assisted task generation and review.
+This guide describes the backend structure and runnable workflows implemented at the current project stage: project and repository setup, GitHub access, pinned repository snapshots, static repository analysis, AI-assisted task generation, and reference-solution generation and review.
 
 ## Backend modules
 
@@ -12,11 +12,11 @@ The NestJS application is composed from domain modules. Controllers own their HT
 | `ProjectsModule` | Create, list, update, and delete projects; return workspace counts | `projects/entities/project.entity.ts` |
 | `RepositoriesModule` | Associate repositories with projects, list associations, remove links, and clone snapshots | `repositories/entities/` |
 | `AnalysisModule` | Queue snapshot analysis, persist report history, and expose summaries and graph data | `analysis/entities/repository-analysis.entity.ts` |
-| `TasksModule` | Retrieve context from selected analyzed baselines, generate AI task suggestions, and save/edit versioned task drafts | `tasks/entities/` |
+| `TasksModule` | Retrieve context from selected analyzed baselines, generate AI task suggestions and provider-consistent reference plans/patches/tests, and save versioned task and reference drafts | `tasks/entities/` |
 | `GitHubModule` | Public repository discovery and allowlisted GitHub App access; list branches and commits | No local entity; GitHub remains the source of repository metadata |
 | `WorkflowModule` | Package, agent, and evaluation API placeholders | No TypeORM entities; prototype state is stored in the artifact JSON file |
 
-`TasksModule` owns the implemented task-generator workflow. `WorkflowModule` retains only package, agent, and evaluation placeholders; those are not presented as working features in the frontend.
+`TasksModule` owns task generation and reference-solution generation/review. `WorkflowModule` retains only package, agent, and evaluation placeholders; those are not presented as working features in the frontend.
 
 ### Source layout
 
@@ -26,7 +26,7 @@ apps/backend/src/
   app.module.ts                     # Root configuration and module composition
   main.ts                           # CORS, /api/v1 prefix, HTTP listener
   database/
-    migrations/                     # Project/repository and analysis schema migrations
+    migrations/                     # Project, repository, analysis, task, and reference schema migrations
   projects/
     projects.controller.ts
     projects.module.ts
@@ -52,10 +52,13 @@ apps/backend/src/
     tasks.controller.ts
     tasks.module.ts
     tasks.service.ts
+    reference-solutions.service.ts
+    reference-solutions.processor.ts
     entities/
       task-generation.entity.ts
       task.entity.ts
       task-version.entity.ts
+      reference-solution.entity.ts
   github/
     github.controller.ts
     github.module.ts
@@ -212,6 +215,8 @@ The Task Generator uses an analyzed repository baseline to prepare editable task
 
 For the detailed end-to-end flow—including the exact UI/backend inputs, context retrieval, what the LLM receives, validation, provenance, provider configuration, and saving reviewed drafts—see [Task Generation: Complete Flow](./task-generation.md).
 
+For generating file-by-file implementation plans, repository-specific code patches, public tests, provider continuity, reference history, and the human validation/review gate, see [Reference Solution Generation and Review](./reference-solutions.md).
+
 1. The frontend loads `GET /api/v1/projects/:id/task-context`. For each repository attached to the project, the backend finds the latest completed analysis for that association's currently selected commit and verifies that its snapshot is still ready. The API returns analysis IDs, roles, module names, and readiness, but never returns local checkout paths.
 2. Select one or more ready component analyses, enter an optional task idea, category, difficulty, constraints, and suggestion count, choose **OpenRouter** or **Ollama**, then request suggestions. The backend checks that each selected analysis belongs to the project and matches the project's pinned commit before creating a generation-history row.
 3. The backend resolves verified checkout paths from the ready snapshot records and sends the analysis summary/report and pinned metadata to the Python service. The Python service only accepts paths under `REPOSITORY_SCAN_ROOT`.
@@ -236,7 +241,7 @@ All paths below are relative to `/api/v1`.
 | `GitHubController` | `GET /github/install-url`, `GET /github/repositories`, `GET /github/repositories/:owner/:name/branches`, `GET /github/repositories/:owner/:name/commits?branch=...` |
 | `RepositoriesController` | `GET /repositories`, `GET /projects/:id/repositories`, `POST /projects/:id/repositories`, `DELETE /projects/:id/repositories/:repositoryId`, `POST /projects/:id/repositories/:repositoryId/snapshots` |
 | `AnalysisController` | `POST /repositories/:id/analyze`, `GET /repositories/:id/analyses`, `GET /analyses/:id`, `GET /analyses/:id/summary`, `GET /analyses/:id/graph` |
-| `TasksController` | `GET /projects/:id/task-context`, `GET /projects/:id/task-generations`, `POST /projects/:id/tasks/suggest` (body includes `provider: "openrouter" \| "ollama"`), `GET /projects/:id/tasks`, `POST /projects/:id/tasks`, `GET /tasks?projectId=...`, `GET /tasks/:id`, `PATCH /tasks/:id`, `GET /tasks/:id/versions` |
+| `TasksController` | `GET /projects/:id/task-context`, `GET /projects/:id/task-generations`, `POST /projects/:id/tasks/suggest` (body includes `provider: "openrouter" \| "ollama"`), `GET /projects/:id/tasks`, `POST /projects/:id/tasks`, `GET /tasks?projectId=...`, `GET /tasks/:id`, `PATCH /tasks/:id`, `GET /tasks/:id/versions`, `POST /tasks/:id/references/generate`, `GET /tasks/:id/references`, `GET /references/:id`, `POST /references/:id/validation`, `PATCH /references/:id/review` |
 | `WorkflowController` | Package, agent, and evaluation placeholder endpoints; see the scope note above |
 
 ## Technology
@@ -311,6 +316,7 @@ Invoke-WebRequest -UseBasicParsing http://localhost:5173/health
 5. In a completed report, use **Overview**, **Feature map**, **File structure**, and **Module map** to inspect the saved snapshot. The maps are based on detected source directories (including nested layouts such as `backend/src` and `frontend/src`); the scanner does not execute repository code or infer product features with an LLM.
 6. Open **Task Generator**, select one or more ready analyses for the project's currently selected commit, and enter the task-generation preferences. Review and edit the source-grounded suggestions, then save chosen drafts.
 7. Open **Task Library** to list saved drafts. Select a task to review its baseline/evidence and version history; editing a saved task creates a new version.
+8. In the selected task's **Reference implementation** panel, generate a file-by-file plan, patch bundle, and test files. The reference uses the provider from the task-generation run. Review the artifacts and record manual build/test results; ForgeBench does not apply or execute generated code.
 
 Reports are immutable records of their analyzed snapshot and analyzer version. If you select a different commit or want to use an updated analyzer, start a new analysis; an older saved report is not rewritten.
 

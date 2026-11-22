@@ -1594,6 +1594,37 @@ type SavedTask = {
   updatedAt: string;
 };
 
+type ReferenceSolution = {
+  id: string;
+  taskId: string;
+  taskVersion: number;
+  version: number;
+  status: string;
+  provider: TaskProvider;
+  model: string | null;
+  promptVersion: string | null;
+  implementationPlan: Array<{
+    repository_id: string;
+    file_path: string;
+    action: string;
+    rationale: string;
+    steps: string[];
+  }> | null;
+  patches: Array<{ repository_id: string; patch_diff: string }> | null;
+  tests: Array<{
+    repository_id: string;
+    file_path: string;
+    test_type: string;
+    purpose: string;
+    content: string;
+  }> | null;
+  contextManifest: Record<string, any> | null;
+  validation: Record<string, any>;
+  reviewNote: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+};
+
 const taskCategories = [
   ['feature', 'Feature implementation'],
   ['bug_fix', 'Bug fixing'],
@@ -1861,6 +1892,14 @@ function TaskLibraryPage() {
   const [tasks, setTasks] = useState<SavedTask[]>([]);
   const [task, setTask] = useState<SavedTask | null>(null);
   const [versions, setVersions] = useState<Array<{ id: string; version: number; content: Record<string, any>; createdAt: string }>>([]);
+  const [referenceSolutions, setReferenceSolutions] = useState<ReferenceSolution[]>([]);
+  const [selectedReferenceId, setSelectedReferenceId] = useState('');
+  const [referenceFeedback, setReferenceFeedback] = useState('');
+  const [reviewNote, setReviewNote] = useState('');
+  const [validationBuild, setValidationBuild] = useState('not_run');
+  const [validationTests, setValidationTests] = useState('not_run');
+  const [validationNotes, setValidationNotes] = useState('');
+  const [referenceBusy, setReferenceBusy] = useState(false);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [requirements, setRequirements] = useState('');
@@ -1883,15 +1922,26 @@ function TaskLibraryPage() {
     if (!taskId) {
       setTask(null);
       setVersions([]);
+      setReferenceSolutions([]);
+      setSelectedReferenceId('');
+      setReferenceFeedback('');
+      setReviewNote('');
       return;
     }
     Promise.all([
       request<SavedTask>(`${apiUrl}/tasks/${taskId}`),
       request<Array<{ id: string; version: number; content: Record<string, any>; createdAt: string }>>(`${apiUrl}/tasks/${taskId}/versions`),
-    ]).then(([loaded, history]) => {
+      request<ReferenceSolution[]>(`${apiUrl}/tasks/${taskId}/references`),
+    ]).then(([loaded, history, references]) => {
       setTask(loaded);
       setProjectId(loaded.projectId);
       setVersions(history);
+      setReferenceSolutions(references);
+      setSelectedReferenceId(references[0]?.id ?? '');
+      setValidationBuild(references[0]?.validation.build ?? 'not_run');
+      setValidationTests(references[0]?.validation.tests ?? 'not_run');
+      setValidationNotes(references[0]?.validation.notes ?? '');
+      setReviewNote(references[0]?.reviewNote ?? '');
       setTitle(loaded.title);
       setDescription(loaded.description);
       setRequirements(loaded.requirements.join('\n'));
@@ -1900,6 +1950,18 @@ function TaskLibraryPage() {
       setError('');
     }).catch(reason => setError(reason instanceof Error ? reason.message : 'Could not load task details.'));
   }, [taskId]);
+
+  useEffect(() => {
+    if (!taskId || !referenceSolutions.some(item => item.status === 'queued' || item.status === 'running')) return;
+    const timer = window.setInterval(() => {
+      request<ReferenceSolution[]>(`${apiUrl}/tasks/${taskId}/references`)
+        .then(setReferenceSolutions)
+        .catch(reason => setError(reason instanceof Error ? reason.message : 'Could not refresh reference generation.'));
+    }, 2500);
+    return () => window.clearInterval(timer);
+  }, [taskId, referenceSolutions]);
+
+  const selectedReference = referenceSolutions.find(item => item.id === selectedReferenceId) ?? referenceSolutions[0];
 
   const saveChanges = async () => {
     if (!task) return;
@@ -1927,6 +1989,67 @@ function TaskLibraryPage() {
       setError(reason instanceof Error ? reason.message : 'Could not save task changes.');
     } finally {
       setSaving(false);
+    }
+  };
+  const generateReference = async () => {
+    if (!task) return;
+    setReferenceBusy(true);
+    setError('');
+    try {
+      const generated = await request<ReferenceSolution>(`${apiUrl}/tasks/${task.id}/references/generate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ reviewerFeedback: referenceFeedback.trim() || undefined }),
+      });
+      setSelectedReferenceId(generated.id);
+      setReferenceSolutions(current => [generated, ...current.filter(item => item.id !== generated.id)]);
+      setValidationBuild(generated.validation.build ?? 'not_run');
+      setValidationTests(generated.validation.tests ?? 'not_run');
+      setValidationNotes(generated.validation.notes ?? '');
+      setReviewNote(generated.reviewNote ?? '');
+      setReferenceFeedback('');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not queue reference generation.');
+    } finally {
+      setReferenceBusy(false);
+    }
+  };
+  const recordReferenceValidation = async () => {
+    if (!selectedReference) return;
+    setReferenceBusy(true);
+    setError('');
+    try {
+      const updated = await request<ReferenceSolution>(`${apiUrl}/references/${selectedReference.id}/validation`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          buildStatus: validationBuild,
+          testStatus: validationTests,
+          notes: validationNotes,
+        }),
+      });
+      setReferenceSolutions(current => current.map(item => item.id === updated.id ? updated : item));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not save validation results.');
+    } finally {
+      setReferenceBusy(false);
+    }
+  };
+  const reviewReference = async (action: 'approve' | 'request_changes' | 'reject') => {
+    if (!selectedReference) return;
+    setReferenceBusy(true);
+    setError('');
+    try {
+      const updated = await request<ReferenceSolution>(`${apiUrl}/references/${selectedReference.id}/review`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action, note: reviewNote }),
+      });
+      setReferenceSolutions(current => current.map(item => item.id === updated.id ? updated : item));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not save reference review.');
+    } finally {
+      setReferenceBusy(false);
     }
   };
 
@@ -1960,6 +2083,89 @@ function TaskLibraryPage() {
         </>}
       </section>
     </div>
+    {task && <section className="panel reference-workspace">
+      <div className="panel-head"><div><span className="eyebrow">Reference implementation</span><h2>Generate and review a solution</h2></div>
+        <button className="primary-button" disabled={referenceBusy || !task.generationId} onClick={generateReference}>
+          {referenceBusy ? 'Working…' : 'Generate reference'}
+        </button>
+      </div>
+      <p className="reference-disclaimer">
+        Uses the same OpenRouter or Ollama provider as the task generation and the task’s pinned snapshot.
+        Generated patches and tests are saved for review only; ForgeBench does not apply or execute them.
+      </p>
+      <label className="reference-feedback">Generation feedback (optional)
+        <textarea value={referenceFeedback} maxLength={2000} onChange={event => setReferenceFeedback(event.target.value)} placeholder="Use this to guide a revised reference after requesting changes." />
+      </label>
+      {referenceSolutions.length > 0 && <div className="reference-history">
+        <label>Reference version
+          <select value={selectedReference?.id ?? ''} onChange={event => {
+            const selected = referenceSolutions.find(item => item.id === event.target.value);
+            setSelectedReferenceId(event.target.value);
+            setValidationBuild(selected?.validation.build ?? 'not_run');
+            setValidationTests(selected?.validation.tests ?? 'not_run');
+            setValidationNotes(selected?.validation.notes ?? '');
+            setReviewNote(selected?.reviewNote ?? '');
+          }}>
+            {referenceSolutions.map(item => <option key={item.id} value={item.id}>v{item.version} · {item.status} · {item.provider}{item.model ? ` · ${item.model}` : ''}</option>)}
+          </select>
+        </label>
+      </div>}
+      {!selectedReference && <div className="empty-state compact">No reference generated yet. Generate one to create a file-by-file plan, patch, and public test files.</div>}
+      {selectedReference && <>
+        <div className="reference-status-row">
+          <span className={`status ${selectedReference.status === 'approved' ? 'green' : selectedReference.status === 'failed' || selectedReference.status === 'rejected' ? 'amber' : 'gray'}`}>{selectedReference.status.replaceAll('_', ' ')}</span>
+          <span>Task v{selectedReference.taskVersion} · {selectedReference.provider}{selectedReference.model ? ` · ${selectedReference.model}` : ''} · {new Date(selectedReference.createdAt).toLocaleString()}</span>
+        </div>
+        {selectedReference.errorMessage && <div className="inline-notice error" role="alert">{selectedReference.errorMessage}</div>}
+        {selectedReference.status === 'queued' || selectedReference.status === 'running'
+          ? <p className="form-hint reference-disclaimer">Reference generation is running in the background. This panel refreshes automatically.</p>
+          : selectedReference.status !== 'failed' && <>
+            <details className="reference-artifact" open>
+              <summary>Implementation plan ({selectedReference.implementationPlan?.length ?? 0} files)</summary>
+              {selectedReference.implementationPlan?.map((item, index) => <article className="reference-plan-item" key={`${item.repository_id}-${item.file_path}-${index}`}>
+                <h3><small>Repository {item.repository_id}</small> <code>{item.file_path}</code> <span className="status gray">{item.action}</span></h3>
+                <p>{item.rationale}</p>
+                <ol>{item.steps.map((step, stepIndex) => <li key={stepIndex}>{step}</li>)}</ol>
+              </article>)}
+            </details>
+            <details className="reference-artifact">
+              <summary>Proposed code patches ({selectedReference.patches?.length ?? 0} repositories)</summary>
+              {selectedReference.patches?.map((patch, index) => <article className="reference-test-item" key={`${patch.repository_id}-${index}`}>
+                <h3><code>Repository {patch.repository_id}</code></h3>
+                <pre>{patch.patch_diff}</pre>
+              </article>)}
+            </details>
+            <details className="reference-artifact">
+              <summary>Generated public tests ({selectedReference.tests?.length ?? 0} files)</summary>
+              {selectedReference.tests?.map((test, index) => <article className="reference-test-item" key={`${test.repository_id}-${test.file_path}-${index}`}>
+                <h3><small>Repository {test.repository_id}</small> <code>{test.file_path}</code> <span className="status gray">{test.test_type}</span></h3>
+                <p>{test.purpose}</p>
+                <pre>{test.content}</pre>
+              </article>)}
+            </details>
+            <section className="reference-validation">
+              <h3>Validation record</h3>
+              <p>These are reviewer-recorded manual results. The generated patch and tests have not been run by ForgeBench.</p>
+              <div className="field-grid">
+                <label>Build result<select value={validationBuild} onChange={event => setValidationBuild(event.target.value)}><option value="not_run">Not run</option><option value="passed">Passed</option><option value="failed">Failed</option></select></label>
+                <label>Test result<select value={validationTests} onChange={event => setValidationTests(event.target.value)}><option value="not_run">Not run</option><option value="passed">Passed</option><option value="failed">Failed</option></select></label>
+              </div>
+              <label>Validation notes<textarea value={validationNotes} maxLength={2000} onChange={event => setValidationNotes(event.target.value)} placeholder="Record how and where the build and tests were checked." /></label>
+              <div className="task-form-actions"><button className="secondary-button" disabled={referenceBusy || selectedReference.status !== 'pending_review'} onClick={recordReferenceValidation}>Record manual validation</button></div>
+            </section>
+            <section className="reference-review">
+              <h3>Human review</h3>
+              <label>Review note<textarea value={reviewNote} maxLength={2000} onChange={event => setReviewNote(event.target.value)} placeholder="Explain requested changes or the approval decision." /></label>
+              <div className="task-form-actions">
+                <button className="secondary-button" disabled={referenceBusy || selectedReference.status !== 'pending_review'} onClick={() => reviewReference('request_changes')}>Request changes</button>
+                <button className="secondary-button" disabled={referenceBusy || selectedReference.status !== 'pending_review'} onClick={() => reviewReference('reject')}>Reject</button>
+                <button className="primary-button" disabled={referenceBusy || selectedReference.status !== 'pending_review' || selectedReference.validation.execution_mode !== 'manual_confirmation' || selectedReference.validation.build !== 'passed' || selectedReference.validation.tests !== 'passed'} onClick={() => reviewReference('approve')}>Approve reference</button>
+              </div>
+              {selectedReference.reviewNote && <p className="form-hint">Latest review note: {selectedReference.reviewNote}</p>}
+            </section>
+          </>}
+      </>}
+    </section>}
   </div>;
 }
 

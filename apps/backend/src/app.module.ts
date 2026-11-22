@@ -15,6 +15,7 @@ import { WorkflowModule } from './workflow/workflow.module';
 import { AgentsModule } from './agents/agents.module';
 import { TasksModule } from './tasks/tasks.module';
 import { CreateTaskFactoryTables1710000000002 } from './database/migrations/1710000000002-CreateTaskFactoryTables';
+import { ReferenceSolutions1795280500000 } from './database/migrations/1795280500000-ReferenceSolutions';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { CreateTaskFactoryTables1710000000002 } from './database/migrations/1710
           RepositoryAnalyses1795280400000,
           CreateAgentsTables1710000000001,
           CreateTaskFactoryTables1710000000002,
+          ReferenceSolutions1795280500000,
         ],
         migrationsRun: true,
         synchronize: true,

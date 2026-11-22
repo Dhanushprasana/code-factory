@@ -13,6 +13,10 @@ from app.task_factory import (
     TaskGenerationResponse,
     generate_task_suggestions,
 )
+from app.reference_factory import (
+    ReferenceGenerationRequest,
+    generate_reference_solution,
+)
 
 app = FastAPI(title="ForgeBench AI Service", version="0.1.0")
 
@@ -109,3 +113,32 @@ async def suggest_tasks(request: TaskGenerationRequest) -> TaskGenerationRespons
                     detail="A task context path is outside the configured repository scan root.",
                 ) from error
     return await generate_task_suggestions(request)
+
+
+@app.post("/api/v1/references/generate")
+async def generate_reference(request: ReferenceGenerationRequest) -> dict:
+    allowed_root = os.getenv("REPOSITORY_SCAN_ROOT")
+    if allowed_root:
+        try:
+            scan_root = Path(allowed_root).resolve(strict=True)
+        except OSError as error:
+            raise HTTPException(
+                status_code=400,
+                detail="Configured repository scan root is unavailable.",
+            ) from error
+        for repository in request.repositories:
+            try:
+                root = Path(repository.repository_path).resolve(strict=True)
+            except OSError as error:
+                raise HTTPException(
+                    status_code=400,
+                    detail="A reference repository path is unavailable.",
+                ) from error
+            try:
+                root.relative_to(scan_root)
+            except ValueError as error:
+                raise HTTPException(
+                    status_code=400,
+                    detail="A reference repository path is outside the configured scan root.",
+                ) from error
+    return await generate_reference_solution(request)

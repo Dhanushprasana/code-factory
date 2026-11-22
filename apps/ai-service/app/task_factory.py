@@ -240,13 +240,15 @@ async def _request_chat_completions(
     max_tokens: int,
     api_key: str | None = None,
     response_schema: dict[str, Any] | None = None,
+    timeout_seconds: float = 300.0,
 ) -> str:
     headers = {"content-type": "application/json"}
     if provider == "openrouter":
         if not api_key:
             raise HTTPException(status_code=503, detail="OpenRouter requires OPENROUTER_API_KEY.")
         headers["authorization"] = f"Bearer {api_key}"
-    timeout_seconds = 300.0 if provider == "ollama" else 90.0
+    if provider == "openrouter":
+        timeout_seconds = min(timeout_seconds, 90.0)
     response_format = {"type": "json_object"}
     if response_schema is not None:
         response_format = {

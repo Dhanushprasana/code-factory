@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from fastapi import HTTPException
 from pathlib import Path
 import json
 import tempfile
@@ -6,6 +7,7 @@ import tempfile
 import pytest
 
 from app import task_factory
+from app import reference_factory
 from app.analyzers import repository_analyzer
 from app.main import app
 
@@ -396,6 +398,167 @@ def test_task_suggestion_uses_selected_provider_and_returns_provenance(
         "structure",
         "static_graph",
     ]
+
+
+@pytest.mark.parametrize(
+    ("provider", "base_url", "model", "api_key"),
+    [
+        ("openrouter", "https://openrouter.test/api/v1", "test/router-model", "test-api-key"),
+        ("ollama", "http://ollama.test:11434/v1", "test-local-model", None),
+    ],
+)
+def test_reference_generation_uses_task_provider_and_pinned_context(
+    monkeypatch,
+    tmp_path,
+    provider,
+    base_url,
+    model,
+    api_key,
+):
+    source = tmp_path / "src" / "orders" / "service.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "def create_order(order):\n    return order\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENROUTER_BASE_URL", "https://openrouter.test/api/v1")
+    monkeypatch.setenv("OPENROUTER_MODEL", "test/router-model")
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test:11434/v1")
+    monkeypatch.setenv("OLLAMA_MODEL", "test-local-model")
+    if api_key:
+        monkeypatch.setenv("OPENROUTER_API_KEY", api_key)
+    else:
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    async def fake_provider(
+        selected_provider,
+        selected_base_url,
+        selected_model,
+        prompt,
+        max_tokens,
+        selected_api_key,
+        response_schema,
+        timeout_seconds,
+    ):
+        assert selected_provider == provider
+        assert selected_base_url == base_url
+        assert selected_model == model
+        assert selected_api_key == api_key
+        assert "Task version 2" in prompt
+        assert "create_order" in prompt
+        assert "diff --git a/src/example.py b/src/example.py" in prompt
+        assert timeout_seconds == (600.0 if provider == "ollama" else 90.0)
+        if provider == "ollama":
+            assert response_schema["properties"]["tests"]["items"]["properties"]["test_type"]["enum"]
+            assert "$defs" not in json.dumps(response_schema)
+        else:
+            assert response_schema is None
+        return json.dumps({
+            "implementation_plan": [{
+                "repository_id": "repository-task-test",
+                "file_path": "src/orders/service.py",
+                "action": "modify",
+                "rationale": "Add explicit validation for order creation.",
+                "steps": ["Validate required fields before storing."],
+            }],
+            "patches": [{
+                "repository_id": "repository-task-test",
+                "patch_diff": (
+                    "diff --git a/src/orders/service.py b/src/orders/service.py\n"
+                    "--- a/src/orders/service.py\n+++ b/src/orders/service.py\n"
+                    "@@ -1,2 +1,3 @@\n def create_order(order):\n+    if not order: raise ValueError('order is required')\n     return order\n"
+                ),
+            }],
+            "tests": [{
+                "repository_id": "repository-task-test",
+                "file_path": "tests/test_order_service.py",
+                "test_type": "feature",
+                "purpose": "Verify invalid order input is rejected.",
+                "content": "def test_rejects_empty_order():\n    ...\n",
+            }],
+        })
+
+    monkeypatch.setattr(reference_factory, "_request_chat_completions", fake_provider)
+    response = client.post("/api/v1/references/generate", json={
+        "operation_id": "reference-run-1",
+        "project_id": "project-task-test",
+        "provider": provider,
+        "task": {
+            "title": "Validate order creation",
+            "description": "Reject missing order data and preserve valid order creation.",
+            "category": "feature",
+            "difficulty": "medium",
+            "requirements": ["Reject empty order data", "Accept valid order data"],
+            "acceptance_criteria": ["Invalid input returns an error", "Valid input creates an order"],
+            "constraints": [],
+            "affected_modules": ["orders"],
+            "task_version": 2,
+        },
+        "repositories": [{
+            "repository_id": "repository-task-test",
+            "repository_name": "sample/orders",
+            "snapshot_id": "snapshot-task-test",
+            "analysis_id": "analysis-task-test",
+            "commit_sha": "abc1234",
+            "repository_path": str(tmp_path),
+            "summary": {
+                "modules": [{"name": "orders", "path": "src/orders"}],
+                "frameworks": ["FastAPI"],
+                "language": ["Python"],
+            },
+            "report": {
+                "directory_tree": [{"path": "src/orders/service.py", "type": "file"}],
+                "symbols": [{
+                    "name": "create_order",
+                    "kind": "function",
+                    "file_path": "src/orders/service.py",
+                    "start_line": 1,
+                    "end_line": 2,
+                }],
+                "api_routes": [],
+                "database_entities": [],
+                "tests": {"files": []},
+                "graph": {"nodes": [], "edges": []},
+            },
+        }],
+    })
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["provider"] == provider
+    assert result["model"] == model
+    assert result["status"] == "pending_review"
+    assert result["implementation_plan"][0]["file_path"] == "src/orders/service.py"
+    assert result["patches"][0]["repository_id"] == "repository-task-test"
+    assert result["tests"][0]["test_type"] == "feature"
+    assert result["validation"]["build"] == "not_run"
+
+
+def test_reference_generation_rejects_patch_path_traversal():
+    with pytest.raises(HTTPException, match="unsafe file path"):
+        reference_factory._validate_reference_output({
+            "implementation_plan": [{
+                "repository_id": "repository-task-test",
+                "file_path": "src/orders/service.py",
+                "action": "modify",
+                "rationale": "Change a file.",
+                "steps": ["Update behavior."],
+            }],
+            "patches": [{
+                "repository_id": "repository-task-test",
+                "patch_diff": (
+                    "diff --git a/../outside.py b/../outside.py\n"
+                    "--- a/../outside.py\n+++ b/../outside.py\n@@ -1 +1 @@\n-old\n+new\n"
+                ),
+            }],
+            "tests": [{
+                "repository_id": "repository-task-test",
+                "file_path": "tests/test_safe.py",
+                "test_type": "feature",
+                "purpose": "Verify generated behavior.",
+                "content": "def test_behavior():\n    assert True\n",
+            }],
+        }, {"repository-task-test"})
 
 
 @pytest.mark.asyncio

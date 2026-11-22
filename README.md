@@ -20,8 +20,9 @@ ForgeBench is a local prototype for repository-grounded coding benchmarks. Imple
 - Analyze a ready snapshot asynchronously and save reports by commit.
 - Explore overview metrics, detected feature/source areas, file structure, and a static module map.
 - Retrieve bounded source context from selected analyzed baselines, choose OpenRouter or Ollama for task suggestions, review/edit them, and save versioned task drafts.
+- Generate provider-consistent reference plans, repository-specific patch/test proposals, and review version history. Generated code is not applied or run by ForgeBench; build/test status must be manually recorded before approval.
 
-The analyzer inspects repository files and manifests without running repository code, installing dependencies, or executing tests. Task generation uses bounded keyword/structure/static-graph retrieval (not vector search). OpenRouter sends selected excerpts to its hosted model and requires an API key; Ollama can process the excerpts on a configured local model endpoint. Coding-agent execution, task reference validation, and benchmark evaluation are not implemented end-to-end.
+The analyzer inspects repository files and manifests without running repository code, installing dependencies, or executing tests. Task and reference generation use bounded keyword/structure/static-graph retrieval (not vector search). OpenRouter sends selected excerpts to its hosted model and requires an API key; Ollama can process the excerpts on a configured local model endpoint. Reference builds/tests are not run in ForgeBench; coding-agent execution and benchmark evaluation are not implemented end-to-end.
 
 Choose the provider per generation in Task Generator. Configure OpenRouter or Ollama model settings in the ignored `apps/backend/.env`; OpenRouter needs `OPENROUTER_API_KEY`, while Ollama needs a running endpoint and pulled model. Ollama can run in the optional Docker Compose `ollama` profile. The app and repository analysis run without either provider being configured, and the task page returns a clear error if the selected provider is unavailable.
 
@@ -47,7 +48,8 @@ Open the UI and follow this session:
 2. Add a public GitHub repository (search or HTTPS URL), load branches, and select a branch, commit, and component role. **Add repository** saves the association; it does not clone the source.
 3. Select **Clone snapshot** and wait for `ready`. The checkout is pinned to the chosen full commit SHA.
 4. Select **Analyze**. When the run completes, review **Overview**, **Feature map**, **File structure**, and **Module map**.
-5. Open **Task Generator**, select analyzed components and an AI provider, then review and save generated task drafts. Use **Task Library** for saved drafts and version history.
+5. Open **Task Generator**, select analyzed components and an AI provider, then review and save generated task drafts.
+6. In **Task Library**, select a saved task to review its baseline/version and generate a reference plan, patch bundle, and public test files. The provider selected for the task is reused. ForgeBench does not apply/run the generated code; record manual validation before approving it.
 
 For OpenRouter, set `OPENROUTER_API_KEY` in `apps\backend\.env`. For Ollama, set the endpoint/model and optionally start the Compose `ollama` profile. See [apps/docs/README.md](apps/docs/README.md) for provider setup, local-model commands, and the full run session.
 
