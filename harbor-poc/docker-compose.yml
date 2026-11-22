@@ -1,0 +1,53 @@
+services:
+  # ── Oracle run: Harbor applies the reference solution and scores it (reward=1 expected) ──
+  # docker compose --profile oracle up
+  oracle:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: harbor-oracle
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/harbor-poc
+    working_dir: /harbor-poc
+    command: ["harbor", "run", "--path", "tasks/hello-python", "--agent", "oracle"]
+    profiles: ["oracle"]
+
+  # ── Nop run: Harbor does nothing, verifier should score 0 (baseline sanity check) ──
+  # docker compose --profile nop up
+  nop:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: harbor-nop
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/harbor-poc
+    working_dir: /harbor-poc
+    command: ["harbor", "run", "--path", "tasks/hello-python", "--agent", "nop"]
+    profiles: ["nop"]
+
+  # ── Live AI agent run: requires ANTHROPIC_API_KEY in .env ──
+  # docker compose --profile agent up
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: harbor-agent
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/harbor-poc
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    working_dir: /harbor-poc
+    command:
+      - harbor
+      - run
+      - --path
+      - tasks/hello-python
+      - --agent
+      - ${HARBOR_AGENT:-claude-code}
+      - --model
+      - ${HARBOR_MODEL:-anthropic/claude-sonnet-4-5}
+    profiles: ["agent"]

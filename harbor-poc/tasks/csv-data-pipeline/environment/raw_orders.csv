@@ -1,0 +1,10 @@
+order_id,user_id,amount,status,timestamp
+ord_001,usr_101,50.00,completed,2026-11-20T10:00:00
+ord_002,usr_102,120.50,COMPLETED,2026-11-20T10:15:00
+ord_003,usr_101,89.50,Completed,2026-11-20T10:30:00
+ord_004,usr_103,45.00,cancelled,2026-11-20T10:45:00
+ord_005,usr_104,-20.00,completed,2026-11-20T11:00:00
+ord_006,usr_102,89.50,completed,2026-11-20T11:15:00
+ord_007,usr_105,,completed,2026-11-20T11:30:00
+ord_008,usr_106,100.00,pending,2026-11-20T11:45:00
+ord_002,usr_102,120.50,COMPLETED,2026-11-20T10:15:00

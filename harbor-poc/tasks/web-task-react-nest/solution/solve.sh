@@ -1,0 +1,98 @@
+#!/bin/bash
+set -e
+
+echo "Applying Oracle Solution for Backend..."
+cat << 'EOF' > /workspace/backend/src/tasks/tasks.service.ts
+import { Injectable, BadRequestException } from '@nestjs/common';
+
+export interface Task {
+  id: string;
+  title: string;
+  priority: 'LOW' | 'MEDIUM' | 'HIGH';
+}
+
+@Injectable()
+export class TasksService {
+  private tasks: Task[] = [];
+
+  getAll(): Task[] {
+    return this.tasks;
+  }
+
+  create(title: string, priority: string): Task {
+    if (!title || typeof title !== 'string') {
+      throw new BadRequestException('Title is required');
+    }
+
+    const validPriorities = ['LOW', 'MEDIUM', 'HIGH'];
+    const normalizedPriority = priority ? priority.toUpperCase() : 'MEDIUM';
+
+    if (!validPriorities.includes(normalizedPriority)) {
+      throw new BadRequestException('Invalid priority');
+    }
+
+    const newTask: Task = {
+      id: String(this.tasks.length + 1),
+      title,
+      priority: normalizedPriority as 'LOW' | 'MEDIUM' | 'HIGH',
+    };
+
+    this.tasks.push(newTask);
+    return newTask;
+  }
+}
+EOF
+
+echo "Applying Oracle Solution for Frontend..."
+cat << 'EOF' > /workspace/frontend/src/App.tsx
+import React, { useState } from 'react';
+
+export interface TaskItem {
+  id: string;
+  title: string;
+  priority: 'LOW' | 'MEDIUM' | 'HIGH';
+}
+
+export const INITIAL_TASKS: TaskItem[] = [
+  { id: '1', title: 'Update dependencies', priority: 'LOW' },
+  { id: '2', title: 'Refactor database', priority: 'MEDIUM' },
+  { id: '3', title: 'Fix production outage', priority: 'HIGH' },
+];
+
+export function App({ initialTasks = INITIAL_TASKS }: { initialTasks?: TaskItem[] }) {
+  const [tasks] = useState<TaskItem[]>(initialTasks);
+  const [filter, setFilter] = useState<'ALL' | 'LOW' | 'MEDIUM' | 'HIGH'>('ALL');
+
+  const filteredTasks = tasks.filter((t) => {
+    if (filter === 'ALL') return true;
+    if (filter === 'HIGH') {
+      return t.priority === 'HIGH';
+    }
+    return t.priority === filter;
+  });
+
+  return (
+    <div style={{ padding: 20 }}>
+      <h1>Task Manager</h1>
+      <div style={{ marginBottom: 15 }}>
+        <button onClick={() => setFilter('ALL')}>All</button>
+        <button onClick={() => setFilter('LOW')}>Low</button>
+        <button onClick={() => setFilter('MEDIUM')}>Medium</button>
+        <button onClick={() => setFilter('HIGH')}>High</button>
+      </div>
+
+      <ul data-testid="task-list">
+        {filteredTasks.map((task) => (
+          <li key={task.id} data-testid={`task-${task.id}`}>
+            <span>{task.title}</span> - <strong>{task.priority}</strong>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+export default App;
+EOF
+
+echo "Oracle Solution Applied Successfully!"

@@ -1,0 +1,20 @@
+[task]
+name = "poc/hello-python"
+
+[metadata]
+author_name = "Harbor POC"
+author_email = "poc@example.com"
+category = "debugging"
+difficulty = "easy"
+difficulty_explanation = "Simple bug fix in a Python script using the =+ vs += operator error."
+tags = ["python", "debugging", "beginner"]
+
+[agent]
+timeout_sec = 600.0
+
+[verifier]
+timeout_sec = 60.0
+environment_mode = "shared"   # test the container where the agent actually fixed the file!
+
+[environment]
+build_timeout_sec = 300.0

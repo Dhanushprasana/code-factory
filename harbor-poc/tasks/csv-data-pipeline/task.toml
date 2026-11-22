@@ -1,0 +1,20 @@
+version = "1.0"
+
+[task]
+name = "poc/csv-data-pipeline"
+
+[metadata]
+author_name = "Harbor POC"
+category = "data-processing"
+difficulty = "medium"
+tags = ["python", "json", "csv", "data-cleaning"]
+
+[agent]
+timeout_sec = 600.0
+
+[verifier]
+timeout_sec = 60.0
+environment_mode = "shared"
+
+[environment]
+build_timeout_sec = 300.0

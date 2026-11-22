@@ -1,0 +1,20 @@
+schema_version: 1
+job_name: nemotron-csv-pipeline
+jobs_dir: jobs
+n_concurrent_trials: 1
+n_attempts: 1
+timeout_multiplier: 2.0
+
+agents:
+  - name: aider
+    model_name: nvidia/nemotron-3.5-super-vl:free
+    base_url: https://openrouter.ai/api/v1
+    model_api_key_name: OPENROUTER_API_KEY
+    model_api_format: openai_chat_completions
+    skip_model_parsing: true
+
+environment:
+  delete: false
+
+tasks:
+  - path: tasks/csv-data-pipeline
