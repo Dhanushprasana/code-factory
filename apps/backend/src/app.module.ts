@@ -13,6 +13,8 @@ import { ProjectsModule } from './projects/projects.module';
 import { RepositoriesModule } from './repositories/repositories.module';
 import { WorkflowModule } from './workflow/workflow.module';
 import { AgentsModule } from './agents/agents.module';
+import { TasksModule } from './tasks/tasks.module';
+import { CreateTaskFactoryTables1710000000002 } from './database/migrations/1710000000002-CreateTaskFactoryTables';
 
 @Module({
   imports: [
@@ -39,7 +41,8 @@ import { AgentsModule } from './agents/agents.module';
         migrations: [
           InitialProjectsAndRepositories1710000000000,
           RepositoryAnalyses1795280400000,
-          CreateAgentsTables1710000000001
+          CreateAgentsTables1710000000001,
+          CreateTaskFactoryTables1710000000002,
         ],
         migrationsRun: true,
         synchronize: true,
@@ -53,6 +56,7 @@ import { AgentsModule } from './agents/agents.module';
     GitHubModule,
     WorkflowModule,
     AgentsModule,
+    TasksModule,
   ],
   controllers: [AppController],
 })

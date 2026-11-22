@@ -40,6 +40,13 @@ services:
     environment:
       APP_ENV: development
       REPOSITORY_SCAN_ROOT: /workspace/storage
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-4o-mini}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
+      TASK_CONTEXT_TOKEN_BUDGET: ${TASK_CONTEXT_TOKEN_BUDGET:-10000}
+      TASK_OUTPUT_TOKEN_BUDGET: ${TASK_OUTPUT_TOKEN_BUDGET:-3000}
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
@@ -53,6 +60,18 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: forgebench-ollama
+    profiles: ["ollama"]
+    restart: unless-stopped
+    environment:
+      OLLAMA_CONTEXT_LENGTH: ${OLLAMA_CONTEXT_LENGTH:-16384}
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
 
   backend:
     build:
@@ -118,3 +137,4 @@ volumes:
   postgres_data:
   redis_data:
   artifacts:
+  ollama_data:

@@ -2,15 +2,18 @@ import { useEffect, useMemo, useState } from 'react';
 import { Navigate, NavLink, Route, Routes, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   Boxes,
+  ClipboardList,
   ChevronRight,
   CircleGauge,
   Edit2,
   FolderKanban,
   GitBranch,
+  History,
   Plus,
   Power,
   RefreshCw,
   Settings,
+  Sparkles,
   Trash2,
   X,
 } from 'lucide-react';
@@ -18,6 +21,8 @@ import {
 const nav = [
   { to: '/', label: 'Overview', icon: CircleGauge },
   { to: '/projects', label: 'Projects', icon: FolderKanban },
+  { to: '/tasks/new', label: 'Task generator', icon: Sparkles },
+  { to: '/tasks', label: 'Task library', icon: ClipboardList },
   { to: '/settings', label: 'Settings', icon: Settings },
   { to: '/analysis', label: 'Repository Analysis', icon: GitBranch },
 ];
@@ -270,6 +275,9 @@ function Shell() {
         <Routes>
           <Route path="/" element={<Overview />} />
           <Route path="/projects" element={<Projects onNewProject={() => setModal(true)} />} />
+          <Route path="/tasks/new" element={<TaskGeneratorPage />} />
+          <Route path="/tasks/:taskId" element={<TaskLibraryPage />} />
+          <Route path="/tasks" element={<TaskLibraryPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/analysis" element={<AnalysisPage />} />
           <Route path="/analysis/:analysisId" element={<AnalysisPage />} />
@@ -1516,6 +1524,443 @@ function AgentModal({
       </div>
     </div>
   );
+}
+
+type TaskContextComponent = {
+  repositoryId: string;
+  repositoryName: string;
+  role: string;
+  branch: string | null;
+  commitSha: string | null;
+  analysisId: string | null;
+  snapshotId: string | null;
+  analyzedAt: string | null;
+  modules: string[];
+  ready: boolean;
+};
+
+type TaskGeneration = {
+  id: string;
+  status: string;
+  provider?: string | null;
+  model?: string | null;
+  promptVersion?: string | null;
+  candidates?: TaskCandidate[];
+  errorMessage?: string | null;
+  createdAt: string;
+};
+
+type TaskProvider = 'openrouter' | 'ollama';
+
+type TaskCandidate = {
+  title: string;
+  description: string;
+  category: string;
+  difficulty: string;
+  requirements: string[];
+  acceptance_criteria: string[];
+  constraints: string[];
+  affected_modules: string[];
+  evidence: Array<{
+    repository_id: string;
+    snapshot_id: string;
+    commit_sha: string;
+    file_path: string;
+    start_line: number;
+    end_line: number;
+    symbol?: string | null;
+  }>;
+};
+
+type SavedTask = {
+  id: string;
+  projectId: string;
+  generationId: string | null;
+  version: number;
+  currentVersion: number;
+  title: string;
+  description: string;
+  category: string;
+  difficulty: string;
+  status: string;
+  requirements: string[];
+  acceptanceCriteria: string[];
+  constraints: string[];
+  affectedModules: string[];
+  baselineManifest: Array<{ repositoryId: string; snapshotId: string; analysisId: string; commitSha: string }>;
+  contextManifest: Record<string, any>;
+  evidence: TaskCandidate['evidence'];
+  createdAt: string;
+  updatedAt: string;
+};
+
+const taskCategories = [
+  ['feature', 'Feature implementation'],
+  ['bug_fix', 'Bug fixing'],
+  ['api_enhancement', 'API enhancement'],
+  ['refactoring', 'Refactoring'],
+  ['database_change', 'Database change'],
+  ['performance', 'Performance improvement'],
+  ['test_improvement', 'Test improvement'],
+] as const;
+
+function TaskGeneratorPage() {
+  const navigate = useNavigate();
+  const [projects, setProjects] = useState<ProjectOption[]>([]);
+  const [projectId, setProjectId] = useState('');
+  const [components, setComponents] = useState<TaskContextComponent[]>([]);
+  const [selectedAnalysisIds, setSelectedAnalysisIds] = useState<string[]>([]);
+  const [history, setHistory] = useState<TaskGeneration[]>([]);
+  const [generation, setGeneration] = useState<TaskGeneration | null>(null);
+  const [candidateIndex, setCandidateIndex] = useState(0);
+  const [draft, setDraft] = useState<TaskCandidate | null>(null);
+  const [idea, setIdea] = useState('');
+  const [provider, setProvider] = useState<TaskProvider | ''>('');
+  const [category, setCategory] = useState('feature');
+  const [difficulty, setDifficulty] = useState('medium');
+  const [constraints, setConstraints] = useState('');
+  const [count, setCount] = useState(3);
+  const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+
+  useEffect(() => {
+    request<ProjectOption[]>(`${apiUrl}/projects`)
+      .then(items => {
+        setProjects(items);
+        setProjectId(current => items.some(item => item.id === current) ? current : (items[0]?.id ?? ''));
+      })
+      .catch(reason => setError(reason instanceof Error ? reason.message : 'Could not load projects.'));
+  }, []);
+
+  useEffect(() => {
+    if (!projectId) {
+      setComponents([]);
+      setSelectedAnalysisIds([]);
+      setHistory([]);
+      return;
+    }
+    let active = true;
+    setError('');
+    Promise.all([
+      request<{ components: TaskContextComponent[] }>(`${apiUrl}/projects/${projectId}/task-context`),
+      request<TaskGeneration[]>(`${apiUrl}/projects/${projectId}/task-generations`),
+    ]).then(([context, runs]) => {
+      if (!active) return;
+      setComponents(context.components);
+      setSelectedAnalysisIds(context.components.filter(item => item.ready && item.analysisId).map(item => item.analysisId!));
+      setHistory(runs);
+    }).catch(reason => {
+      if (active) setError(reason instanceof Error ? reason.message : 'Could not load project task context.');
+    });
+    return () => { active = false; };
+  }, [projectId]);
+
+  const selectedCandidate = generation?.candidates?.[candidateIndex];
+  const selectCandidate = (index: number) => {
+    setCandidateIndex(index);
+    setDraft(generation?.candidates?.[index] ?? null);
+  };
+  const toggleAnalysis = (analysisId: string) => {
+    setSelectedAnalysisIds(current => current.includes(analysisId)
+      ? current.filter(id => id !== analysisId)
+      : [...current, analysisId]);
+  };
+  const generate = async () => {
+    setError('');
+    setNotice('');
+    setGeneration(null);
+    setDraft(null);
+    if (!projectId) {
+      setError('Create or select a project before generating tasks.');
+      return;
+    }
+    if (!selectedAnalysisIds.length) {
+      setError('Select at least one component with a completed analysis for its pinned commit.');
+      return;
+    }
+    if (!provider) {
+      setError('Choose OpenRouter or Ollama before generating task drafts.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await request<TaskGeneration>(`${apiUrl}/projects/${projectId}/tasks/suggest`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          provider,
+          analysisIds: selectedAnalysisIds,
+          userIdea: idea.trim() || undefined,
+          category,
+          difficulty,
+          constraints: constraints.split(/\r?\n/).map(line => line.trim()).filter(Boolean),
+          count,
+        }),
+      });
+      setGeneration(result);
+      setCandidateIndex(0);
+      setDraft(result.candidates?.[0] ?? null);
+      setHistory(current => [result, ...current.filter(run => run.id !== result.id)]);
+      setNotice(`Generated ${result.candidates?.length ?? 0} repository-grounded draft(s) with ${result.provider} · ${result.model}.`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Task generation failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const loadGeneration = (generationId: string) => {
+    const selected = history.find(run => run.id === generationId);
+    if (!selected?.candidates?.length) {
+      setError(selected?.errorMessage ?? 'This generation has no saved suggestions.');
+      return;
+    }
+    setError('');
+    setGeneration(selected);
+    setCandidateIndex(0);
+    setDraft(selected.candidates[0]);
+    setNotice(`Loaded generation from ${new Date(selected.createdAt).toLocaleString()}.`);
+  };
+  const saveDraft = async () => {
+    if (!generation || !draft || !projectId) return;
+    setSaving(true);
+    setError('');
+    try {
+      const saved = await request<SavedTask>(`${apiUrl}/projects/${projectId}/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          generationId: generation.id,
+          candidateIndex,
+          title: draft.title,
+          description: draft.description,
+          category: draft.category,
+          difficulty: draft.difficulty,
+          requirements: draft.requirements,
+          acceptanceCriteria: draft.acceptance_criteria,
+          constraints: draft.constraints,
+          affectedModules: draft.affected_modules,
+        }),
+      });
+      navigate(`/tasks/${saved.id}`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not save this task draft.');
+    } finally {
+      setSaving(false);
+    }
+  };
+  const changeDraft = (field: keyof TaskCandidate, value: string | string[]) => {
+    setDraft(current => current ? { ...current, [field]: value } : current);
+  };
+
+  return <div className="page task-workspace">
+    <PageHeader eyebrow="Task creation" title="Task generator" action={<button className="secondary-button" onClick={() => navigate('/tasks')}><ClipboardList size={15} /> Task library</button>} />
+    <p className="task-page-intro">Create task drafts from completed analyses of this project's pinned repository snapshots. Every suggestion keeps file and commit provenance for review.</p>
+    {error && <div className="inline-notice error" role="alert">{error}</div>}
+    {notice && <div className="inline-notice" role="status">{notice}</div>}
+    <div className="task-layout">
+      <section className="panel task-form">
+        <div className="panel-head"><div><span className="eyebrow">Step 1 · project scope</span><h2>Task configuration</h2></div><Sparkles size={18} /></div>
+        <label>Project workspace
+          <select value={projectId} onChange={event => { setProjectId(event.target.value); setGeneration(null); setDraft(null); }}>
+            <option value="">Choose a project…</option>
+            {projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
+          </select>
+        </label>
+        <p className="form-hint">Only the selected project's connected repositories and their current pinned commits can be used as task context.</p>
+        <div className="task-context-picker">
+          <div className="task-subhead"><strong>Analyzed project components</strong><span>{selectedAnalysisIds.length} selected</span></div>
+          {components.length ? components.map(component => <label className="task-context-option" key={component.repositoryId}>
+            <input type="checkbox" checked={Boolean(component.analysisId && selectedAnalysisIds.includes(component.analysisId))} disabled={!component.ready || !component.analysisId} onChange={() => component.analysisId && toggleAnalysis(component.analysisId)} />
+            <span><b>{component.repositoryName}</b><small>{component.role} · {component.branch || 'branch unavailable'} · {component.commitSha?.slice(0, 12) ?? 'No pinned commit'}</small>
+              <small>{component.ready ? `${component.modules.length} modules · analyzed ${component.analyzedAt ? new Date(component.analyzedAt).toLocaleDateString() : ''}` : 'Clone the selected snapshot and complete its repository analysis first.'}</small>
+            </span>
+            <span className={`status ${component.ready ? 'green' : 'amber'}`}>{component.ready ? 'Ready' : 'Needs analysis'}</span>
+          </label>) : <div className="empty-state compact">Connect, clone, and analyze a repository before creating a task.</div>}
+        </div>
+        <label>Task idea (optional)
+          <textarea value={idea} onChange={event => setIdea(event.target.value)} maxLength={1000} placeholder="e.g. Make order cancellation idempotent and preserve inventory invariants" />
+        </label>
+        <div className="field-grid">
+          <label>Category<select value={category} onChange={event => setCategory(event.target.value)}>{taskCategories.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          <label>Difficulty<select value={difficulty} onChange={event => setDifficulty(event.target.value)}><option value="easy">Easy</option><option value="medium">Medium</option><option value="hard">Hard</option></select></label>
+        </div>
+        <label>Additional constraints (one per line)
+          <textarea value={constraints} onChange={event => setConstraints(event.target.value)} placeholder={'Keep current API behavior backward compatible\nInclude invalid-input and boundary cases'} />
+        </label>
+        <label>Suggestions to generate<select value={count} onChange={event => setCount(Number(event.target.value))}><option value={1}>1</option><option value={2}>2</option><option value={3}>3</option><option value={4}>4</option><option value={5}>5</option></select></label>
+        <label>AI provider
+          <select value={provider} onChange={event => {
+            const value = event.target.value;
+            setProvider(value === 'openrouter' || value === 'ollama' ? value : '');
+          }}>
+            <option value="">Choose a provider…</option>
+            <option value="openrouter">OpenRouter (hosted models)</option>
+            <option value="ollama">Ollama (local model)</option>
+          </select>
+        </label>
+        <p className="form-hint">
+          OpenRouter needs an API key in the backend environment. Ollama needs a running local server and a pulled model. Source context goes only to the provider you select.
+        </p>
+        <div className="task-form-actions"><button className="primary-button" onClick={generate} disabled={busy || !selectedAnalysisIds.length || !provider}><Sparkles size={16} />{busy ? 'Generating from repository context…' : 'Generate task drafts'}</button></div>
+        <p className="form-hint">Repository code is treated as untrusted input; ForgeBench does not execute it.</p>
+      </section>
+      <section className="panel task-guardrails">
+        <div className="panel-head"><div><span className="eyebrow">Review before saving</span><h2>Generation guardrails</h2></div><span className="status green">Enabled</span></div>
+        <ul className="task-guardrail-list">
+          <li><b>Commit pinned</b><span>Each draft records the selected repository snapshot and full commit SHA.</span></li>
+          <li><b>Source grounded</b><span>Context uses keyword, structure, and static graph retrieval from completed analysis reports.</span></li>
+          <li><b>Measurable criteria</b><span>Review requirements and acceptance criteria for observable behavior and edge cases.</span></li>
+          <li><b>Human editable</b><span>Generated wording is a draft. Edit it and save only after review.</span></li>
+          <li><b>No hidden claims</b><span>Source references and affected modules are validated against the retrieved snapshot context.</span></li>
+        </ul>
+        <div className="demo-notice">Choose OpenRouter for hosted models or Ollama to keep repository context on your local model endpoint. Provider credentials and model names are configured separately in the backend environment.</div>
+        <div className="task-history">
+          <div className="task-subhead"><strong><History size={15} /> Generation history</strong><span>{history.length} runs</span></div>
+          {history.length ? <select aria-label="Load previous task generation" defaultValue="" onChange={event => event.target.value && loadGeneration(event.target.value)}>
+            <option value="">Choose a previous generation…</option>
+            {history.map(run => <option key={run.id} value={run.id}>{new Date(run.createdAt).toLocaleString()} · {run.provider || 'provider unknown'} · {run.status} · {run.candidates?.length ?? 0} suggestions</option>)}
+          </select> : <p className="form-hint">Generation runs are recorded here for this project.</p>}
+        </div>
+      </section>
+    </div>
+    <section className="panel task-preview">
+      <div className="panel-head"><div><span className="eyebrow">Step 2 · review and edit</span><h2>Generated task preview</h2></div><span className={`status ${generation?.status === 'completed' ? 'green' : 'gray'}`}>{generation?.status ?? 'Waiting for generation'}</span></div>
+      {!generation?.candidates?.length || !draft ? <div className="empty-state">Configure a project with an analyzed snapshot, then generate task drafts to review them here.</div> : <>
+        <div className="task-candidate-tabs" role="tablist" aria-label="Task suggestions">{generation.candidates.map((candidate, index) => <button type="button" className={index === candidateIndex ? 'selected' : ''} key={`${candidate.title}-${index}`} onClick={() => selectCandidate(index)}>Draft {index + 1}<small>{candidate.title}</small></button>)}</div>
+        {selectedCandidate && <div className="task-review-grid">
+          <div className="task-review-fields">
+            <label>Title<input value={draft.title} maxLength={160} onChange={event => changeDraft('title', event.target.value)} /></label>
+            <label>Description<textarea value={draft.description} maxLength={3000} rows={4} onChange={event => changeDraft('description', event.target.value)} /></label>
+            <div className="field-grid"><label>Category<select value={draft.category} onChange={event => changeDraft('category', event.target.value)}>{taskCategories.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>Difficulty<select value={draft.difficulty} onChange={event => changeDraft('difficulty', event.target.value)}><option value="easy">Easy</option><option value="medium">Medium</option><option value="hard">Hard</option></select></label></div>
+            <label>Requirements (one per line)<textarea rows={5} value={draft.requirements.join('\n')} onChange={event => changeDraft('requirements', event.target.value.split(/\r?\n/))} /></label>
+            <label>Acceptance criteria (one per line)<textarea rows={5} value={draft.acceptance_criteria.join('\n')} onChange={event => changeDraft('acceptance_criteria', event.target.value.split(/\r?\n/))} /></label>
+            <label>Constraints (one per line)<textarea rows={3} value={draft.constraints.join('\n')} onChange={event => changeDraft('constraints', event.target.value.split(/\r?\n/))} /></label>
+          </div>
+          <aside className="task-evidence-panel">
+            <h3>Repository evidence</h3>
+            <div className="task-module-tags">{draft.affected_modules.map(module => <span className="analysis-tag" key={module}>{module}</span>)}</div>
+            {draft.evidence.map((evidence, index) => <div className="task-evidence-item" key={`${evidence.snapshot_id}-${evidence.file_path}-${index}`}>
+              <b>{evidence.symbol || 'Source evidence'}</b><code>{evidence.file_path}:{evidence.start_line}-{evidence.end_line}</code><small>Commit {evidence.commit_sha.slice(0, 12)}</small>
+            </div>)}
+            <div className="task-form-actions"><button className="primary-button" onClick={saveDraft} disabled={saving}>{saving ? 'Saving draft…' : 'Save reviewed draft'}</button></div>
+            <p className="form-hint">Saving creates task version 1. Later edits create immutable versions and retain the original commit/context manifest.</p>
+          </aside>
+        </div>}
+      </>}
+    </section>
+  </div>;
+}
+
+function TaskLibraryPage() {
+  const navigate = useNavigate();
+  const { taskId } = useParams();
+  const [projects, setProjects] = useState<ProjectOption[]>([]);
+  const [projectId, setProjectId] = useState('');
+  const [tasks, setTasks] = useState<SavedTask[]>([]);
+  const [task, setTask] = useState<SavedTask | null>(null);
+  const [versions, setVersions] = useState<Array<{ id: string; version: number; content: Record<string, any>; createdAt: string }>>([]);
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [requirements, setRequirements] = useState('');
+  const [acceptanceCriteria, setAcceptanceCriteria] = useState('');
+  const [constraints, setConstraints] = useState('');
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    request<ProjectOption[]>(`${apiUrl}/projects`).then(setProjects)
+      .catch(reason => setError(reason instanceof Error ? reason.message : 'Could not load projects.'));
+  }, []);
+  useEffect(() => {
+    const url = projectId ? `${apiUrl}/projects/${projectId}/tasks` : `${apiUrl}/tasks`;
+    request<SavedTask[]>(url).then(setTasks)
+      .catch(reason => setError(reason instanceof Error ? reason.message : 'Could not load tasks.'));
+  }, [projectId]);
+  useEffect(() => {
+    if (!taskId) {
+      setTask(null);
+      setVersions([]);
+      return;
+    }
+    Promise.all([
+      request<SavedTask>(`${apiUrl}/tasks/${taskId}`),
+      request<Array<{ id: string; version: number; content: Record<string, any>; createdAt: string }>>(`${apiUrl}/tasks/${taskId}/versions`),
+    ]).then(([loaded, history]) => {
+      setTask(loaded);
+      setProjectId(loaded.projectId);
+      setVersions(history);
+      setTitle(loaded.title);
+      setDescription(loaded.description);
+      setRequirements(loaded.requirements.join('\n'));
+      setAcceptanceCriteria(loaded.acceptanceCriteria.join('\n'));
+      setConstraints(loaded.constraints.join('\n'));
+      setError('');
+    }).catch(reason => setError(reason instanceof Error ? reason.message : 'Could not load task details.'));
+  }, [taskId]);
+
+  const saveChanges = async () => {
+    if (!task) return;
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      const updated = await request<SavedTask>(`${apiUrl}/tasks/${task.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          title,
+          description,
+          requirements: requirements.split(/\r?\n/).map(item => item.trim()).filter(Boolean),
+          acceptanceCriteria: acceptanceCriteria.split(/\r?\n/).map(item => item.trim()).filter(Boolean),
+          constraints: constraints.split(/\r?\n/).map(item => item.trim()).filter(Boolean),
+        }),
+      });
+      setTask(updated);
+      const history = await request<typeof versions>(`${apiUrl}/tasks/${task.id}/versions`);
+      setVersions(history);
+      setNotice(`Saved task version ${updated.currentVersion}.`);
+      setTasks(current => current.map(item => item.id === updated.id ? updated : item));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not save task changes.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return <div className="page task-library-page">
+    <PageHeader eyebrow="Task workbench" title={task ? 'Task review' : 'Task library'} action={<button className="primary-button" onClick={() => navigate('/tasks/new')}><Sparkles size={15} /> New task</button>} />
+    {error && <div className="inline-notice error" role="alert">{error}</div>}
+    {notice && <div className="inline-notice" role="status">{notice}</div>}
+    <div className="project-picker"><label htmlFor="task-library-project">Project</label><select id="task-library-project" value={projectId} onChange={event => { setProjectId(event.target.value); if (taskId) navigate('/tasks'); }}><option value="">All projects</option>{projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></div>
+    <div className="task-library-layout">
+      <section className="panel task-list-panel">
+        <div className="panel-head"><div><span className="eyebrow">Saved task specifications</span><h2>{tasks.length} task{tasks.length === 1 ? '' : 's'}</h2></div></div>
+        {tasks.length ? tasks.map(item => <button type="button" className={`task-library-row ${task?.id === item.id ? 'selected' : ''}`} key={item.id} onClick={() => navigate(`/tasks/${item.id}`)}>
+          <span><b>{item.title}</b><small>{projects.find(project => project.id === item.projectId)?.name ?? 'Project'} · {item.category.replaceAll('_', ' ')}</small><small>{item.baselineManifest.map(base => base.commitSha.slice(0, 10)).join(', ')}</small></span>
+          <span className="task-row-meta"><span className={`status ${item.status === 'draft' ? 'amber' : 'gray'}`}>{item.status}</span><small>v{item.currentVersion}</small></span>
+        </button>) : <div className="empty-state compact">No saved tasks yet. Generate and review a task draft to populate the library.</div>}
+      </section>
+      <section className="panel task-detail-panel">
+        {!task ? <div className="empty-state"><ClipboardList size={22} /><h2>Select a task to review</h2><p>Saved task specifications, source evidence, pinned baselines, and version history appear here.</p></div> : <>
+          <div className="panel-head"><div><span className="eyebrow">Draft · v{task.currentVersion}</span><h2>{task.title}</h2></div><span className="status amber">{task.status}</span></div>
+          <div className="task-detail-editor">
+            <label>Title<input value={title} onChange={event => setTitle(event.target.value)} maxLength={160} /></label>
+            <label>Description<textarea value={description} onChange={event => setDescription(event.target.value)} rows={4} /></label>
+            <div className="field-grid"><label>Requirements<textarea value={requirements} onChange={event => setRequirements(event.target.value)} rows={5} /></label><label>Acceptance criteria<textarea value={acceptanceCriteria} onChange={event => setAcceptanceCriteria(event.target.value)} rows={5} /></label></div>
+            <label>Constraints<textarea value={constraints} onChange={event => setConstraints(event.target.value)} rows={3} /></label>
+            <div className="task-detail-section"><h3>Affected modules</h3><div className="task-module-tags">{task.affectedModules.map(module => <span className="analysis-tag" key={module}>{module}</span>)}</div></div>
+            <div className="task-detail-section"><h3>Commit-pinned baseline</h3><div className="task-baseline-list">{task.baselineManifest.map(base => <div key={base.snapshotId}><code>{base.commitSha}</code><small>Snapshot {base.snapshotId} · analysis {base.analysisId}</small></div>)}</div></div>
+            <div className="task-detail-section"><h3>Source evidence</h3>{task.evidence.map((item, index) => <div className="task-evidence-item" key={`${item.file_path}-${index}`}><b>{item.symbol || 'Source reference'}</b><code>{item.file_path}:{item.start_line}-{item.end_line}</code><small>Commit {item.commit_sha}</small></div>)}</div>
+            <div className="task-detail-section"><h3><History size={15} /> Version history</h3><div className="task-version-list">{versions.map(version => <div key={version.id}><b>Version {version.version}</b><small>{new Date(version.createdAt).toLocaleString()}</small><span>{version.content.title}</span></div>)}</div></div>
+            <div className="task-form-actions"><button className="primary-button" disabled={saving} onClick={saveChanges}>{saving ? 'Saving…' : `Save as version ${(task.currentVersion ?? 1) + 1}`}</button></div>
+          </div>
+        </>}
+      </section>
+    </div>
+  </div>;
 }
 
 export default function App() {

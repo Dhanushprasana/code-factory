@@ -1,6 +1,6 @@
 # ForgeBench
 
-ForgeBench is a local prototype for repository-grounded coding benchmarks. The currently implemented workflow covers PostgreSQL-backed projects, GitHub repository access, immutable commit snapshots, and static repository analysis.
+ForgeBench is a local prototype for repository-grounded coding benchmarks. Implemented workflows cover PostgreSQL-backed projects, GitHub repository access, immutable commit snapshots, static repository analysis, and source-grounded AI task generation/review.
 
 ## Applications
 
@@ -19,8 +19,11 @@ ForgeBench is a local prototype for repository-grounded coding benchmarks. The c
 - Reuse a repository record across projects while keeping project-specific branch/commit selections separate.
 - Analyze a ready snapshot asynchronously and save reports by commit.
 - Explore overview metrics, detected feature/source areas, file structure, and a static module map.
+- Retrieve bounded source context from selected analyzed baselines, choose OpenRouter or Ollama for task suggestions, review/edit them, and save versioned task drafts.
 
-The analyzer inspects repository files and manifests without running repository code, installing dependencies, or executing tests. AI task/reference generation, coding-agent execution, and benchmark evaluation are not implemented end-to-end yet; their prototype API placeholders are not shown as working frontend features.
+The analyzer inspects repository files and manifests without running repository code, installing dependencies, or executing tests. Task generation uses bounded keyword/structure/static-graph retrieval (not vector search). OpenRouter sends selected excerpts to its hosted model and requires an API key; Ollama can process the excerpts on a configured local model endpoint. Coding-agent execution, task reference validation, and benchmark evaluation are not implemented end-to-end.
+
+Choose the provider per generation in Task Generator. Configure OpenRouter or Ollama model settings in the ignored `apps/backend/.env`; OpenRouter needs `OPENROUTER_API_KEY`, while Ollama needs a running endpoint and pulled model. Ollama can run in the optional Docker Compose `ollama` profile. The app and repository analysis run without either provider being configured, and the task page returns a clear error if the selected provider is unavailable.
 
 For detailed backend modules, database entities, API flow, analyzer limits, configuration, and the complete run session, see [apps/docs/README.md](apps/docs/README.md).
 
@@ -44,6 +47,9 @@ Open the UI and follow this session:
 2. Add a public GitHub repository (search or HTTPS URL), load branches, and select a branch, commit, and component role. **Add repository** saves the association; it does not clone the source.
 3. Select **Clone snapshot** and wait for `ready`. The checkout is pinned to the chosen full commit SHA.
 4. Select **Analyze**. When the run completes, review **Overview**, **Feature map**, **File structure**, and **Module map**.
+5. Open **Task Generator**, select analyzed components and an AI provider, then review and save generated task drafts. Use **Task Library** for saved drafts and version history.
+
+For OpenRouter, set `OPENROUTER_API_KEY` in `apps\backend\.env`. For Ollama, set the endpoint/model and optionally start the Compose `ollama` profile. See [apps/docs/README.md](apps/docs/README.md) for provider setup, local-model commands, and the full run session.
 
 Public GitHub requests work without authentication subject to GitHub's shared quota. For a higher quota, set `GITHUB_TOKEN` only in the ignored `apps\backend\.env`. Private repository access requires a GitHub App with **Contents: read-only** and **Metadata: read-only** permissions, installed only on repositories ForgeBench should access. Never put credentials in `.env.example` or commit `.env`.
 

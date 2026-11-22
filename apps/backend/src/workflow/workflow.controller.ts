@@ -5,26 +5,6 @@ import { AppService } from '../app.service';
 export class WorkflowController {
   constructor(private readonly appService: AppService) {}
 
-  @Get('tasks')
-  tasks() {
-    return this.appService.tasks();
-  }
-
-  @Post('projects/:id/tasks/suggest')
-  suggestTasks(@Param('id') id: string, @Body() body: any) {
-    return this.appService.suggestTasks(id, body);
-  }
-
-  @Post('projects/:id/tasks')
-  createTask(@Param('id') id: string, @Body() body: any) {
-    return this.appService.createTask(id, body);
-  }
-
-  @Get('tasks/:id')
-  task(@Param('id') id: string) {
-    return this.appService.task(id);
-  }
-
   @Post('tasks/:id/generate-reference')
   generateReference(@Param('id') id: string) {
     return this.appService.generateReference(id);

@@ -1,7 +1,11 @@
 from fastapi.testclient import TestClient
 from pathlib import Path
+import json
 import tempfile
 
+import pytest
+
+from app import task_factory
 from app.analyzers import repository_analyzer
 from app.main import app
 
@@ -239,3 +243,235 @@ def test_analysis_detects_python_stack_routes_and_models():
         assert "pytest" in payload["summary"]["test_commands"]
         assert payload["summary"]["api_routes"][0]["path"] == "/health"
         assert payload["summary"]["database_entities"][0]["name"] == "Item"
+
+
+def _task_suggestion_request(repository_path: str, provider: str = "openrouter") -> dict:
+    return {
+        "operation_id": "task-generation-test",
+        "project_id": "project-task-test",
+        "provider": provider,
+        "user_idea": "Add order cancellation",
+        "category": "feature",
+        "difficulty": "medium",
+        "constraints": ["Keep cancellation idempotent"],
+        "count": 1,
+        "repositories": [{
+            "repository_id": "repository-task-test",
+            "repository_name": "sample/orders",
+            "snapshot_id": "snapshot-task-test",
+            "analysis_id": "analysis-task-test",
+            "commit_sha": "abc1234",
+            "repository_path": repository_path,
+            "summary": {
+                "modules": [{"name": "orders", "path": "src/orders"}],
+                "frameworks": ["FastAPI"],
+                "language": ["Python"],
+            },
+            "report": {
+                "directory_tree": [{"path": "src/orders/service.py", "type": "file"}],
+                "symbols": [{
+                    "name": "cancel_order",
+                    "kind": "function",
+                    "file_path": "src/orders/service.py",
+                    "start_line": 1,
+                    "end_line": 3,
+                }],
+                "api_routes": [],
+                "database_entities": [],
+                "tests": {"files": []},
+                "graph": {"nodes": [], "edges": []},
+            },
+        }],
+    }
+
+
+def test_openrouter_suggestions_require_api_key(monkeypatch, tmp_path):
+    source = tmp_path / "src" / "orders" / "service.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("def cancel_order(order_id):\n    return order_id\n", encoding="utf-8")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    response = client.post("/api/v1/tasks/suggest", json=_task_suggestion_request(str(tmp_path)))
+
+    assert response.status_code == 503
+    assert "OPENROUTER_API_KEY" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("provider", "base_url", "model", "api_key"),
+    [
+        ("openrouter", "https://openrouter.test/api/v1", "test/router-model", "test-api-key"),
+        ("ollama", "http://ollama.test:11434/v1", "test-local-model", None),
+    ],
+)
+def test_task_suggestion_uses_selected_provider_and_returns_provenance(
+    monkeypatch,
+    tmp_path,
+    provider,
+    base_url,
+    model,
+    api_key,
+):
+    source = tmp_path / "src" / "orders" / "service.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "def cancel_order(order_id):\n    return order_id\n\n"
+        "def find_order(order_id):\n    return None\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENROUTER_BASE_URL", "https://openrouter.test/api/v1")
+    monkeypatch.setenv("OPENROUTER_MODEL", "test/router-model")
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test:11434/v1")
+    monkeypatch.setenv("OLLAMA_MODEL", "test-local-model")
+    if api_key:
+        monkeypatch.setenv("OPENROUTER_API_KEY", api_key)
+    else:
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    async def fake_provider(
+        selected_provider,
+        selected_base_url,
+        selected_model,
+        prompt,
+        max_tokens,
+        selected_api_key,
+        response_schema,
+    ):
+        assert selected_provider == provider
+        assert selected_base_url == base_url
+        assert selected_model == model
+        assert selected_api_key == api_key
+        if provider == "ollama":
+            assert response_schema["properties"]["tasks"]["maxItems"] == 1
+            candidate_schema = response_schema["properties"]["tasks"]["items"]
+            assert candidate_schema["properties"]["category"]["enum"]
+            assert candidate_schema["properties"]["affected_modules"]["items"]["enum"]
+            assert candidate_schema["properties"]["evidence"]["items"]["enum"]
+        else:
+            assert response_schema is None
+        assert "cancel_order" in prompt
+        assert "order_id" in prompt
+        return json.dumps({
+            "tasks": [{
+                "title": "Make order cancellation idempotent",
+                "description": "Ensure repeated cancellation requests do not change an order more than once.",
+                "category": "feature",
+                "difficulty": "medium",
+                "requirements": [
+                    "Cancel an eligible order once.",
+                    "Reject or safely ignore repeated cancellation requests.",
+                ],
+                "acceptance_criteria": [
+                    "The first cancellation changes the order state.",
+                    "A repeated cancellation leaves the final order state unchanged.",
+                ],
+                "constraints": ["Keep cancellation idempotent"],
+                "affected_modules": ["orders"],
+                "evidence": [{
+                    "repository_id": "repository-task-test",
+                    "snapshot_id": "snapshot-task-test",
+                    "commit_sha": "abc1234",
+                    "file_path": "src/orders/service.py",
+                    "start_line": 1,
+                    "end_line": 3,
+                    "symbol": "cancel_order",
+                }],
+            }],
+        })
+
+    monkeypatch.setattr(task_factory, "_request_chat_completions", fake_provider)
+    response = client.post(
+        "/api/v1/tasks/suggest",
+        json=_task_suggestion_request(str(tmp_path), provider),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["provider"] == provider
+    assert payload["model"] == model
+    assert payload["tasks"][0]["affected_modules"] == ["orders"]
+    assert payload["tasks"][0]["evidence"][0]["commit_sha"] == "abc1234"
+    assert payload["context_manifest"]["retrieval_strategies"] == [
+        "keyword",
+        "structure",
+        "static_graph",
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "base_url", "api_key", "response_schema"),
+    [
+        ("openrouter", "https://openrouter.test/api/v1", "test-api-key", None),
+        (
+            "ollama",
+            "http://ollama.test:11434/v1",
+            None,
+            {
+                "type": "object",
+                "properties": {"tasks": {"type": "array", "maxItems": 1}},
+            },
+        ),
+    ],
+)
+async def test_chat_completions_request_uses_provider_endpoint_and_auth(
+    monkeypatch,
+    provider,
+    base_url,
+    api_key,
+    response_schema,
+):
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+        is_success = True
+
+        @staticmethod
+        def json():
+            return {"choices": [{"message": {"content": '{"tasks": []}'}}]}
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, headers, json):
+            captured.update(url=url, headers=headers, payload=json)
+            return FakeResponse()
+
+    monkeypatch.setattr(task_factory.httpx, "AsyncClient", FakeAsyncClient)
+
+    result = await task_factory._request_chat_completions(
+        provider,
+        base_url,
+        "test-model",
+        "Return a JSON object.",
+        500,
+        api_key,
+        response_schema,
+    )
+
+    assert result == '{"tasks": []}'
+    assert captured["url"] == f"{base_url}/chat/completions"
+    assert captured["payload"]["model"] == "test-model"
+    assert captured["payload"]["max_tokens"] == 500
+    if response_schema is None:
+        assert captured["payload"]["response_format"] == {"type": "json_object"}
+    else:
+        assert captured["payload"]["response_format"] == {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "task_suggestions",
+                "strict": True,
+                "schema": response_schema,
+            },
+        }
+    assert captured["headers"].get("authorization") == (
+        f"Bearer {api_key}" if api_key else None
+    )

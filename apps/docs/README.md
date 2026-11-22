@@ -1,6 +1,6 @@
 # ForgeBench backend guide
 
-This guide describes the backend structure and runnable workflows implemented at the current project stage: project and repository setup, GitHub access, pinned repository snapshots, and static repository analysis.
+This guide describes the backend structure and runnable workflows implemented at the current project stage: project and repository setup, GitHub access, pinned repository snapshots, static repository analysis, and AI-assisted task generation and review.
 
 ## Backend modules
 
@@ -12,10 +12,11 @@ The NestJS application is composed from domain modules. Controllers own their HT
 | `ProjectsModule` | Create, list, update, and delete projects; return workspace counts | `projects/entities/project.entity.ts` |
 | `RepositoriesModule` | Associate repositories with projects, list associations, remove links, and clone snapshots | `repositories/entities/` |
 | `AnalysisModule` | Queue snapshot analysis, persist report history, and expose summaries and graph data | `analysis/entities/repository-analysis.entity.ts` |
+| `TasksModule` | Retrieve context from selected analyzed baselines, generate AI task suggestions, and save/edit versioned task drafts | `tasks/entities/` |
 | `GitHubModule` | Public repository discovery and allowlisted GitHub App access; list branches and commits | No local entity; GitHub remains the source of repository metadata |
-| `WorkflowModule` | Existing task, package, agent, and evaluation API placeholders | No TypeORM entities; prototype state is stored in the artifact JSON file |
+| `WorkflowModule` | Package, agent, and evaluation API placeholders | No TypeORM entities; prototype state is stored in the artifact JSON file |
 
-`WorkflowModule` is intentionally separated from the implemented setup flow. Its task, package, and evaluation responses are prototype placeholders, not database-backed AI generation, reference validation, coding-agent execution, or benchmark results. They are not presented as working features in the frontend.
+`TasksModule` owns the implemented task-generator workflow. `WorkflowModule` retains only package, agent, and evaluation placeholders; those are not presented as working features in the frontend.
 
 ### Source layout
 
@@ -47,6 +48,14 @@ apps/backend/src/
     analysis.service.ts
     entities/
       repository-analysis.entity.ts
+  tasks/
+    tasks.controller.ts
+    tasks.module.ts
+    tasks.service.ts
+    entities/
+      task-generation.entity.ts
+      task.entity.ts
+      task-version.entity.ts
   github/
     github.controller.ts
     github.module.ts
@@ -77,6 +86,8 @@ ProjectEntity 1 ─── * ProjectRepositoryEntity * ─── 1 RepositoryEnti
                                                     |
                                                     *
                                          RepositoryAnalysisEntity
+
+ProjectEntity 1 ─── * TaskGenerationEntity 1 ─── * TaskEntity 1 ─── * TaskVersionEntity
 ```
 
 - **ProjectEntity** (`projects`) stores the project name, description, status, and timestamps.
@@ -84,6 +95,9 @@ ProjectEntity 1 ─── * ProjectRepositoryEntity * ─── 1 RepositoryEnti
 - **ProjectRepositoryEntity** (`project_repositories`) links one project to one repository and stores that project's component role and selected branch/full commit SHA. A project/repository pair is unique.
 - **RepositorySnapshotEntity** (`repository_snapshots`) records a checkout attempt/result for a repository and exact commit SHA. The repository/commit pair is unique; the local checkout path is not returned by the API.
 - **RepositoryAnalysisEntity** (`repository_analyses`) records queued, running, completed, or failed analysis for one ready snapshot. It stores the source-grounded summary and report as JSONB, analyzer version, warnings, and any failure message.
+- **TaskGenerationEntity** (`task_generation_runs`) records task-generation inputs, status/error, AI provider/model/prompt version, candidate drafts, and the context manifest used for the run.
+- **TaskEntity** (`tasks`) stores a saved draft, its structured requirements/acceptance criteria, baseline and source-evidence manifests, and its current version number. Tasks remain editable drafts; agent execution and evaluation are not implemented.
+- **TaskVersionEntity** (`task_versions`) stores an immutable JSONB snapshot for each saved or edited task version.
 
 Deleting a project removes its project links through the database foreign key. Removing a repository from a project removes only that association. Repository records and snapshots are retained unless their owning repository is deleted.
 
@@ -192,6 +206,25 @@ Analysis API routes (relative to `/api/v1`):
 
 The current report is deterministic static analysis; it does not call an LLM. Coverage percentages are not inferred from test-file names. The UI shows test files and configured commands, but does not execute tests or claim test coverage. Embedding generation, vector persistence/semantic search, and separate relational graph-node/edge tables remain future work; the current bounded graph is persisted as part of the JSONB report.
 
+### Generate, review, and manage tasks
+
+The Task Generator uses an analyzed repository baseline to prepare editable task drafts. It does not execute code, create pull requests, or run benchmark evaluations.
+
+For the detailed end-to-end flow—including the exact UI/backend inputs, context retrieval, what the LLM receives, validation, provenance, provider configuration, and saving reviewed drafts—see [Task Generation: Complete Flow](./task-generation.md).
+
+1. The frontend loads `GET /api/v1/projects/:id/task-context`. For each repository attached to the project, the backend finds the latest completed analysis for that association's currently selected commit and verifies that its snapshot is still ready. The API returns analysis IDs, roles, module names, and readiness, but never returns local checkout paths.
+2. Select one or more ready component analyses, enter an optional task idea, category, difficulty, constraints, and suggestion count, choose **OpenRouter** or **Ollama**, then request suggestions. The backend checks that each selected analysis belongs to the project and matches the project's pinned commit before creating a generation-history row.
+3. The backend resolves verified checkout paths from the ready snapshot records and sends the analysis summary/report and pinned metadata to the Python service. The Python service only accepts paths under `REPOSITORY_SCAN_ROOT`.
+4. The Context Engine ranks supported source files using lexical matches over repository paths, extracted symbols, routes, and entities; it includes structural/test evidence and expands a bounded number of static dependency neighbors. It extracts bounded source chunks and records file, symbol, line range, snapshot, and commit provenance. The current retrieval modes are `keyword`, `structure`, and `static_graph`; embeddings and vector semantic search are not implemented.
+5. In Task Generator, select **OpenRouter** or **Ollama** for each generation. Both use the OpenAI-compatible chat-completions format. OpenRouter sends the bounded context to the configured hosted model and requires `OPENROUTER_API_KEY`; Ollama sends it to the configured Ollama endpoint and does not need a cloud API key. Ollama requests a strict JSON schema constrained to the requested suggestion count, known modules, and retrieved evidence references; the AI service validates the response before saving it.
+6. The backend persists the completed generation, provider/model/prompt version, candidate suggestions, and provenance manifest. In the review UI, edit a suggestion and save it as a task draft. Saved drafts are listed in the Task Library; edits create a new immutable version, and the task detail view shows its evidence and version history.
+
+OpenRouter settings are `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL` (default `https://openrouter.ai/api/v1`), and `OPENROUTER_MODEL` (default `openai/gpt-4o-mini`). The key is passed to the AI-service container and is not stored in PostgreSQL. Ollama settings are `OLLAMA_BASE_URL` (default `http://host.docker.internal:11434/v1`), `OLLAMA_MODEL` (default `qwen2.5:7b`), and `OLLAMA_CONTEXT_LENGTH` (default `16384`). `TASK_CONTEXT_TOKEN_BUDGET` and `TASK_OUTPUT_TOKEN_BUDGET` apply to either provider. Missing or invalid provider configuration returns a clear error rather than fabricated suggestions.
+
+OpenRouter is a hosted service: selected repository source excerpts and task context are sent to the configured OpenRouter model. Ollama can keep those excerpts on a local model endpoint; ensure the configured endpoint is actually local if that is a data-handling requirement. The provider can be selected independently for each generation, and the selected provider/model are retained in generation history.
+
+For Docker-based Ollama, Compose includes an optional `ollama` profile so the model server does not consume resources unless requested. Set `OLLAMA_BASE_URL=http://ollama:11434/v1` in the local environment, start that profile, and pull the configured model as described in the run session below. Alternatively, install Ollama on the host and use the default `host.docker.internal` URL.
+
 ## HTTP API ownership
 
 All paths below are relative to `/api/v1`.
@@ -203,7 +236,8 @@ All paths below are relative to `/api/v1`.
 | `GitHubController` | `GET /github/install-url`, `GET /github/repositories`, `GET /github/repositories/:owner/:name/branches`, `GET /github/repositories/:owner/:name/commits?branch=...` |
 | `RepositoriesController` | `GET /repositories`, `GET /projects/:id/repositories`, `POST /projects/:id/repositories`, `DELETE /projects/:id/repositories/:repositoryId`, `POST /projects/:id/repositories/:repositoryId/snapshots` |
 | `AnalysisController` | `POST /repositories/:id/analyze`, `GET /repositories/:id/analyses`, `GET /analyses/:id`, `GET /analyses/:id/summary`, `GET /analyses/:id/graph` |
-| `WorkflowController` | Task, package, agent, and evaluation placeholder endpoints; see the scope note above |
+| `TasksController` | `GET /projects/:id/task-context`, `GET /projects/:id/task-generations`, `POST /projects/:id/tasks/suggest` (body includes `provider: "openrouter" \| "ollama"`), `GET /projects/:id/tasks`, `POST /projects/:id/tasks`, `GET /tasks?projectId=...`, `GET /tasks/:id`, `PATCH /tasks/:id`, `GET /tasks/:id/versions` |
+| `WorkflowController` | Package, agent, and evaluation placeholder endpoints; see the scope note above |
 
 ## Technology
 
@@ -212,7 +246,8 @@ All paths below are relative to `/api/v1`.
 - **Octokit** handles public GitHub API calls and GitHub App installation authentication.
 - **simple-git / Git** clone repositories and verify immutable commit checkouts.
 - **BullMQ / Redis** run repository analysis outside the HTTP request and track its durable PostgreSQL status.
-- **Python / FastAPI / Tree-sitter** scan pinned source files and produce repository metadata and a bounded static graph.
+- **Python / FastAPI / Tree-sitter** scan pinned source files and produce repository metadata and a bounded static graph; the AI service also performs bounded task-context retrieval and validates OpenAI-compatible chat completions from the selected provider.
+- **OpenRouter / Ollama** provide selectable hosted or local model backends for task suggestions. OpenRouter needs an API key; Ollama needs a running server and a pulled local model.
 - **Docker Compose** runs PostgreSQL, Redis, the backend, AI service, and frontend for the local prototype. Repository analysis uses Redis for its queue and the AI service for static scanning.
 
 ## End-to-end run session
@@ -230,6 +265,19 @@ if (-not (Test-Path apps\backend\.env)) {
 ```
 
 Public GitHub access works without a token, subject to GitHub's shared rate limit. For higher public API quotas, set `GITHUB_TOKEN` only in `apps\backend\.env`. For private repositories, configure the GitHub App values described in [Configuration](#configuration). Never put credentials in `.env.example` or commit `apps\backend\.env`.
+
+To enable OpenRouter task suggestions, add an OpenRouter API key to the ignored `apps\backend\.env` as `OPENROUTER_API_KEY=...`. This is optional for starting the app and for repository analysis. OpenRouter sends selected source excerpts to its hosted model; review your data-sharing requirements before using it.
+
+For local Ollama, either use the optional Compose profile or install Ollama on the host. For the Compose profile, set `OLLAMA_BASE_URL=http://ollama:11434/v1` in `apps\backend\.env`; start the profile and download the configured model:
+
+```powershell
+docker compose --profile ollama --env-file apps\backend\.env up -d ollama ai-service
+docker compose --profile ollama exec ollama ollama pull qwen2.5:7b
+```
+
+Change the `ollama pull` model to match `OLLAMA_MODEL`. The model is downloaded into the persistent `ollama_data` Docker volume. The host-installed option uses `http://host.docker.internal:11434/v1`; Ollama must be running and reachable from the containers.
+
+For a smaller local model, set `OLLAMA_MODEL=qwen2.5:3b` in `apps/backend/.env` and pull that tag instead of the default 7B model. Qwen 2.5 3B has been verified with a live repository-grounded task-generation request in this Compose setup.
 
 ### 2. Start all services
 
@@ -261,8 +309,12 @@ Invoke-WebRequest -UseBasicParsing http://localhost:5173/health
 3. On the repository row, select **Clone snapshot** and wait for the snapshot to become `ready`. The checkout is pinned to the selected full commit SHA and stored in the Docker artifact volume.
 4. Select **Analyze** for that repository and start an analysis. The page shows the queued/running/completed state and keeps previous reports in analysis history.
 5. In a completed report, use **Overview**, **Feature map**, **File structure**, and **Module map** to inspect the saved snapshot. The maps are based on detected source directories (including nested layouts such as `backend/src` and `frontend/src`); the scanner does not execute repository code or infer product features with an LLM.
+6. Open **Task Generator**, select one or more ready analyses for the project's currently selected commit, and enter the task-generation preferences. Review and edit the source-grounded suggestions, then save chosen drafts.
+7. Open **Task Library** to list saved drafts. Select a task to review its baseline/evidence and version history; editing a saved task creates a new version.
 
 Reports are immutable records of their analyzed snapshot and analyzer version. If you select a different commit or want to use an updated analyzer, start a new analysis; an older saved report is not rewritten.
+
+Choose OpenRouter or Ollama in the Task Generator. OpenRouter requires its key; Ollama requires the configured endpoint and model to be available. The current context retrieval is bounded lexical/structural/static-graph retrieval, not embedding/vector search. No task is automatically executed or evaluated.
 
 ### 4. Logs and shutdown
 
@@ -298,7 +350,15 @@ Backend configuration is read from `apps/backend/.env` (copy `.env.example` firs
 | `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_SLUG` | Optional GitHub App access for private repositories |
 | `GITHUB_TOKEN` | Optional PAT for higher GitHub REST API quota when using public repositories |
 | `ARTIFACT_STORAGE_PATH` | Local workflow/repository artifact directory |
-| `AI_SERVICE_URL` | Internal URL of the Python repository-analysis service |
+| `AI_SERVICE_URL` | Internal URL of the Python analysis and task-context service |
+| `OPENROUTER_API_KEY` | OpenRouter API key; passed to the AI-service container |
+| `OPENROUTER_BASE_URL` | OpenRouter API base URL (default `https://openrouter.ai/api/v1`) |
+| `OPENROUTER_MODEL` | OpenRouter model slug (default `openai/gpt-4o-mini`) |
+| `OLLAMA_BASE_URL` | Ollama OpenAI-compatible base URL (default `http://host.docker.internal:11434/v1`; use `http://ollama:11434/v1` for the Compose profile) |
+| `OLLAMA_MODEL` | Ollama model tag (default `qwen2.5:7b`) |
+| `OLLAMA_CONTEXT_LENGTH` | Context window configured on the optional Ollama container (default `16384`) |
+| `TASK_CONTEXT_TOKEN_BUDGET` | Approximate source-context token budget (default `10000`) |
+| `TASK_OUTPUT_TOKEN_BUDGET` | Provider task-generation output token budget (default `3000`) |
 
 The example leaves `GITHUB_TOKEN` blank. Without authentication, GitHub limits public REST API requests by the shared client IP; set a token only in `apps/backend/.env` to authenticate public repository search, branch, and commit requests. Keep the token local and do not commit it. If GitHub rejects configured credentials, the API returns an actionable upstream error instead of a generic 500. Revoke and replace any credential that has been committed or shared. The token is not used to access private repositories; private repository access continues to require the GitHub App allowlist.
 
