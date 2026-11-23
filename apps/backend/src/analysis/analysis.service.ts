@@ -218,6 +218,18 @@ export class AnalysisService {
       analysis.status = 'completed';
       analysis.errorMessage = null;
       await this.analyses.save(analysis);
+
+      try {
+        await this.analysisQueue.add(
+          'generate-context',
+          { analysisId: analysis.id },
+          { attempts: 1, removeOnComplete: 100, removeOnFail: 100 },
+        );
+        analysis.contextStatus = 'running';
+        await this.analyses.save(analysis);
+      } catch (queueErr) {
+        this.logger.warn(`Could not auto-enqueue context generation: ${this.errorMessage(queueErr)}`);
+      }
     } catch (error) {
       analysis.status = 'failed';
       analysis.errorMessage = this.errorMessage(error);
@@ -250,6 +262,122 @@ export class AnalysisService {
     return analysis;
   }
 
+  async startContextGeneration(analysisId: string) {
+    const analysis = await this.findAnalysis(analysisId);
+    if (analysis.status !== 'completed' || !analysis.summary) {
+      throw new BadRequestException('Complete repository analysis before generating context.');
+    }
+    analysis.contextStatus = 'running';
+    analysis.contextError = null;
+    await this.analyses.save(analysis);
+
+    try {
+      await this.analysisQueue.add(
+        'generate-context',
+        { analysisId: analysis.id },
+        { attempts: 1, removeOnComplete: 100, removeOnFail: 100 },
+      );
+    } catch (error) {
+      analysis.contextStatus = 'failed';
+      analysis.contextError = this.errorMessage(error);
+      await this.analyses.save(analysis);
+      this.logger.error(
+        `Could not enqueue context generation for analysis ${analysis.id}.`,
+        error instanceof Error ? error.stack : undefined,
+      );
+      throw new ServiceUnavailableException('Context generation could not be queued. Check Redis.');
+    }
+
+    return this.toAnalysisSummary(analysis);
+  }
+
+  async processContextGeneration(analysisId: string): Promise<void> {
+    const analysis = await this.findAnalysis(analysisId);
+    analysis.contextStatus = 'running';
+    analysis.contextError = null;
+    await this.analyses.save(analysis);
+
+    try {
+      const snapshot = await this.snapshots
+        .createQueryBuilder('snapshot')
+        .addSelect('snapshot.checkoutPath')
+        .where('snapshot.id = :snapshotId', { snapshotId: analysis.snapshotId })
+        .andWhere('snapshot.repositoryId = :repositoryId', {
+          repositoryId: analysis.repositoryId,
+        })
+        .andWhere('snapshot.status = :status', { status: 'ready' })
+        .getOne();
+      if (!snapshot?.checkoutPath || !fs.existsSync(snapshot.checkoutPath)) {
+        throw new Error('The ready repository snapshot checkout is unavailable.');
+      }
+      this.assertStoragePath(snapshot.checkoutPath);
+
+      const serviceUrl = this.config.get<string>('AI_SERVICE_URL', 'http://localhost:8000')
+        .replace(/\/+$/, '');
+      const response = await fetch(`${serviceUrl}/api/v1/context/generate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          repository_path: snapshot.checkoutPath,
+          repository_id: analysis.repositoryId,
+          snapshot_id: snapshot.id,
+          commit_sha: analysis.commitSha,
+          summary: analysis.summary ?? {},
+          report: analysis.report ?? {},
+          model: 'nvidia/nemotron-3.5-super-vl:free',
+          provider: 'openrouter',
+        }),
+        signal: AbortSignal.timeout(4 * 60 * 1000),
+      });
+
+      if (!response.ok) {
+        const detail = await response.text();
+        throw new Error(
+          `AI service returned HTTP ${response.status}${detail ? `: ${detail.slice(0, 500)}` : ''}.`,
+        );
+      }
+
+      const result = await response.json() as {
+        context_markdown: string;
+        model: string;
+        tokens_used?: number;
+      };
+
+      if (!result.context_markdown) {
+        throw new Error('AI service returned an empty context markdown.');
+      }
+
+      analysis.contextMarkdown = result.context_markdown;
+      analysis.contextStatus = 'completed';
+      analysis.contextError = null;
+      await this.analyses.save(analysis);
+
+      try {
+        const artifactDir = path.join(this.storagePath, 'analyses', analysis.id);
+        fs.mkdirSync(artifactDir, { recursive: true });
+        fs.writeFileSync(path.join(artifactDir, 'CONTEXT.md'), result.context_markdown, 'utf-8');
+      } catch (err) {
+        this.logger.warn(`Could not persist CONTEXT.md artifact: ${this.errorMessage(err)}`);
+      }
+    } catch (error) {
+      analysis.contextStatus = 'failed';
+      analysis.contextError = this.errorMessage(error);
+      await this.analyses.save(analysis);
+      this.logger.error(
+        `Context generation for analysis ${analysis.id} failed: ${analysis.contextError}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
+  }
+
+  async getContextMarkdown(analysisId: string): Promise<string> {
+    const analysis = await this.findAnalysis(analysisId);
+    if (!analysis.contextMarkdown) {
+      throw new NotFoundException('Context markdown has not been generated for this analysis yet.');
+    }
+    return analysis.contextMarkdown;
+  }
+
   private toAnalysisSummary(analysis: RepositoryAnalysisEntity) {
     return {
       id: analysis.id,
@@ -258,6 +386,9 @@ export class AnalysisService {
       commitSha: analysis.commitSha,
       status: analysis.status,
       analyzerVersion: analysis.analyzerVersion,
+      contextMarkdown: analysis.contextMarkdown,
+      contextStatus: analysis.contextStatus ?? 'pending',
+      contextError: analysis.contextError,
       createdAt: analysis.createdAt,
       updatedAt: analysis.updatedAt,
     };

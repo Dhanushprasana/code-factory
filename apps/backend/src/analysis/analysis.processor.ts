@@ -9,6 +9,10 @@ export class AnalysisProcessor extends WorkerHost {
   }
 
   async process(job: Job<{ analysisId: string }>): Promise<void> {
-    await this.analysisService.processAnalysis(job.data.analysisId);
+    if (job.name === 'generate-context') {
+      await this.analysisService.processContextGeneration(job.data.analysisId);
+    } else {
+      await this.analysisService.processAnalysis(job.data.analysisId);
+    }
   }
 }

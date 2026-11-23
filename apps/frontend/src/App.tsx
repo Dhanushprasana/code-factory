@@ -60,6 +60,9 @@ type AnalysisRecord = {
   warnings?: string[];
   summary?: Record<string, any> | null;
   report?: Record<string, any> | null;
+  contextMarkdown?: string | null;
+  contextStatus?: 'pending' | 'queued' | 'running' | 'completed' | 'failed' | null;
+  contextError?: string | null;
 };
 
 type FileTreeNode = {
@@ -450,7 +453,10 @@ function AnalysisPage() {
   const [analysis, setAnalysis] = useState<AnalysisRecord | null>(null);
   const [error, setError] = useState('');
   const [starting, setStarting] = useState(false);
-  const [analysisView, setAnalysisView] = useState<'overview' | 'features' | 'structure' | 'modules'>('overview');
+  const [analysisView, setAnalysisView] = useState<'overview' | 'features' | 'structure' | 'modules' | 'context'>('overview');
+  const [generatingContext, setGeneratingContext] = useState(false);
+  const [contextCopied, setContextCopied] = useState(false);
+  const [rawView, setRawView] = useState(false);
   const [featureQuery, setFeatureQuery] = useState('');
   const [featureLayer, setFeatureLayer] = useState('all');
   const [fileQuery, setFileQuery] = useState('');
@@ -532,7 +538,12 @@ function AnalysisPage() {
         if (!active) return;
         setAnalysis(result);
         setError('');
-        if (result.status === 'queued' || result.status === 'running') {
+        if (
+          result.status === 'queued' ||
+          result.status === 'running' ||
+          result.contextStatus === 'queued' ||
+          result.contextStatus === 'running'
+        ) {
           timer = window.setTimeout(load, 1500);
         }
       } catch (reason) {
@@ -547,6 +558,43 @@ function AnalysisPage() {
   }, [analysisId]);
 
   const selectedAssociation = associations.find(item => item.repositoryId === repositoryId);
+
+  const triggerContextGeneration = async () => {
+    if (!analysis?.id) return;
+    setGeneratingContext(true);
+    setError('');
+    try {
+      const result = await request<AnalysisRecord>(`${apiUrl}/analyses/${analysis.id}/context`, {
+        method: 'POST',
+      });
+      setAnalysis(current => current ? { ...current, ...result, contextStatus: 'running' } : result);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not trigger context generation.');
+    } finally {
+      setGeneratingContext(false);
+    }
+  };
+
+  const copyContextMarkdown = () => {
+    if (!analysis?.contextMarkdown) return;
+    navigator.clipboard.writeText(analysis.contextMarkdown);
+    setContextCopied(true);
+    setTimeout(() => setContextCopied(false), 2000);
+  };
+
+  const downloadContextMarkdown = () => {
+    if (!analysis?.contextMarkdown) return;
+    const blob = new Blob([analysis.contextMarkdown], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    const repoName = (selectedAssociation?.repository.fullName || 'repository').replace(/[\/\\]/g, '-');
+    link.download = `${repoName}-CONTEXT.md`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
   const startAnalysis = async () => {
     if (!selectedAssociation?.selectedCommitSha) return;
     setStarting(true);
@@ -731,6 +779,7 @@ function AnalysisPage() {
                   ['features', 'Feature map', featureAreas.length],
                   ['structure', 'File structure'],
                   ['modules', 'Module map', featureAreas.length],
+                  ['context', 'Context file'],
                 ] as const).map(([id, label, count]) => <button
                   type="button"
                   key={id}
@@ -739,7 +788,7 @@ function AnalysisPage() {
                   aria-controls={`analysis-panel-${id}`}
                   aria-selected={analysisView === id}
                   className={`analysis-tab ${analysisView === id ? 'active' : ''}`}
-                  onClick={() => setAnalysisView(id)}
+                  onClick={() => setAnalysisView(id as any)}
                 >{label}{typeof count === 'number' && <span>{count}</span>}</button>)}
               </div>
 
@@ -880,6 +929,100 @@ function AnalysisPage() {
                     </> : <p>Select a module node to inspect its evidence.</p>}
                   </aside>
                 </div>
+              </section>}
+
+              {analysisView === 'context' && <section id="analysis-panel-context" role="tabpanel" aria-labelledby="analysis-tab-context" className="analysis-context-view">
+                <div className="analysis-view-intro context-view-intro">
+                  <div>
+                    <span className="eyebrow">Repository Blueprint & Knowledge</span>
+                    <h2>Context file (<code>CONTEXT.md</code>)</h2>
+                    <p>Comprehensive architecture, feature inventory, data models, and API interfaces synthesized with NVIDIA Nemotron 3.5 Super VL.</p>
+                  </div>
+                  <div className="context-view-actions">
+                    {analysis.contextStatus === 'completed' && analysis.contextMarkdown && <>
+                      <button type="button" className="secondary-button" onClick={() => setRawView(!rawView)}>
+                        {rawView ? 'Rendered View' : 'Raw Markdown'}
+                      </button>
+                      <button type="button" className="secondary-button" onClick={copyContextMarkdown}>
+                        {contextCopied ? 'Copied!' : 'Copy Markdown'}
+                      </button>
+                      <button type="button" className="secondary-button" onClick={downloadContextMarkdown}>
+                        Download .md
+                      </button>
+                      <button type="button" className="secondary-button" disabled={generatingContext} onClick={triggerContextGeneration}>
+                        Regenerate
+                      </button>
+                    </>}
+                    {(!analysis.contextMarkdown && analysis.contextStatus !== 'running' && analysis.contextStatus !== 'queued') && (
+                      <button type="button" className="primary-button" disabled={generatingContext} onClick={triggerContextGeneration}>
+                        {generatingContext ? 'Requesting...' : 'Generate Context File'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {(analysis.contextStatus === 'running' || analysis.contextStatus === 'queued') && (
+                  <div className="context-status-bar in-progress">
+                    <div className="context-status-bar-info">
+                      <div className="context-spinner" />
+                      <div>
+                        <strong>Synthesizing repository context...</strong>
+                        <p style={{ margin: '3px 0 0', fontSize: '11px', color: '#475467' }}>
+                          Analyzing grounded AST symbols, manifest dependencies, endpoints, and architecture using <code>nvidia/nemotron-3.5-super-vl:free</code>. This view will update automatically.
+                        </p>
+                      </div>
+                    </div>
+                    <span className="status amber" style={{ textTransform: 'uppercase', fontSize: '10px' }}>In Progress</span>
+                  </div>
+                )}
+
+                {analysis.contextStatus === 'failed' && (
+                  <div className="context-status-bar failed">
+                    <div>
+                      <strong>Context generation failed</strong>
+                      <p style={{ margin: '3px 0 0', fontSize: '11px' }}>{analysis.contextError || 'An error occurred while generating repository context.'}</p>
+                    </div>
+                    <button type="button" className="primary-button" onClick={triggerContextGeneration} disabled={generatingContext}>
+                      Retry
+                    </button>
+                  </div>
+                )}
+
+                {analysis.contextMarkdown ? (
+                  <div className="context-markdown-container">
+                    <div className="context-markdown-toolbar">
+                      <span><strong>CONTEXT.md</strong> &bull; Generated with NVIDIA Nemotron 3.5 Super VL</span>
+                      <span>{analysis.contextMarkdown.length} characters &bull; ~{Math.round(analysis.contextMarkdown.length / 4)} tokens</span>
+                    </div>
+                    {rawView ? (
+                      <textarea
+                        className="context-markdown-raw"
+                        readOnly
+                        value={analysis.contextMarkdown}
+                      />
+                    ) : (
+                      <div className="context-markdown-body">
+                        <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, fontFamily: 'inherit', background: 'transparent', color: 'inherit', padding: 0 }}>
+                          {analysis.contextMarkdown}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  analysis.contextStatus !== 'running' && analysis.contextStatus !== 'queued' && (
+                    <div className="empty-state compact" style={{ padding: '40px 20px', textAlign: 'center' }}>
+                      <p style={{ fontSize: '14px', fontWeight: 600, color: '#344054', marginBottom: '8px' }}>
+                        No context file generated yet for this snapshot.
+                      </p>
+                      <p style={{ fontSize: '12px', color: '#667085', maxWidth: '480px', margin: '0 auto 16px' }}>
+                        Generate a comprehensive, single-file Markdown blueprint containing executive summary, system design, feature matrix, data schemas, and runtime instructions.
+                      </p>
+                      <button type="button" className="primary-button" onClick={triggerContextGeneration} disabled={generatingContext}>
+                        Generate Context File (.md)
+                      </button>
+                    </div>
+                  )
+                )}
               </section>}
             </>}
       </section>}

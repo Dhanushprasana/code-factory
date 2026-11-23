@@ -638,3 +638,54 @@ async def test_chat_completions_request_uses_provider_endpoint_and_auth(
     assert captured["headers"].get("authorization") == (
         f"Bearer {api_key}" if api_key else None
     )
+
+
+def test_generate_context_endpoint(monkeypatch, tmp_path):
+    import httpx
+    from app import context_generator
+
+    (tmp_path / "README.md").write_text("# Test Repo\nDemo app.", encoding="utf-8")
+    (tmp_path / "package.json").write_text('{"name": "demo-app"}', encoding="utf-8")
+
+    class FakeResponse:
+        status_code = 200
+        is_success = True
+
+        def json(self):
+            return {
+                "choices": [{
+                    "message": {
+                        "content": "# Repository Context: Test Repo\n\n## 1. Executive Summary\nA demo app."
+                    }
+                }],
+                "usage": {"total_tokens": 150}
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, headers, json):
+            return FakeResponse()
+
+    monkeypatch.setattr(context_generator.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+
+    response = client.post("/api/v1/context/generate", json={
+        "repository_path": str(tmp_path),
+        "summary": {"file_count": 2, "frameworks": ["FastAPI"]},
+        "report": {},
+    })
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "Repository Context: Test Repo" in data["context_markdown"]
+    assert data["model"] == "nvidia/nemotron-3.5-super-vl:free"
+    assert data["tokens_used"] == 150
+
