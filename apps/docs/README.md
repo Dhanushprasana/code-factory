@@ -12,7 +12,7 @@ The NestJS application is composed from domain modules. Controllers own their HT
 | `ProjectsModule` | Create, list, update, and delete projects; return workspace counts | `projects/entities/project.entity.ts` |
 | `RepositoriesModule` | Associate repositories with projects, list associations, remove links, and clone snapshots | `repositories/entities/` |
 | `AnalysisModule` | Queue snapshot analysis, persist report history, and expose summaries and graph data | `analysis/entities/repository-analysis.entity.ts` |
-| `TasksModule` | Retrieve context from selected analyzed baselines, generate AI task suggestions and provider-consistent reference plans/patches/tests, and save versioned task and reference drafts | `tasks/entities/` |
+| `TasksModule` | Retrieve context from selected analyzed baselines, generate AI task suggestions and provider-consistent reference plans/patches/tests, apply patches to isolated review copies, and save versioned task/reference records | `tasks/entities/` |
 | `GitHubModule` | Public repository discovery and allowlisted GitHub App access; list branches and commits | No local entity; GitHub remains the source of repository metadata |
 | `WorkflowModule` | Package, agent, and evaluation API placeholders | No TypeORM entities; prototype state is stored in the artifact JSON file |
 
@@ -215,7 +215,9 @@ The Task Generator uses an analyzed repository baseline to prepare editable task
 
 For the detailed end-to-end flow—including the exact UI/backend inputs, context retrieval, what the LLM receives, validation, provenance, provider configuration, and saving reviewed drafts—see [Task Generation: Complete Flow](./task-generation.md).
 
-For generating file-by-file implementation plans, repository-specific code patches, public tests, provider continuity, reference history, and the human validation/review gate, see [Reference Solution Generation and Review](./reference-solutions.md).
+For generating file-by-file implementation plans, repository-specific code patches, public tests, provider continuity, pinned-snapshot patch preflight, reference history, and the human validation/review gate, see [Reference Solution Generation and Review](./reference-solutions.md).
+
+For the investigation of a malformed generated patch rejected by `git apply --check`, including the exact hunk-count mismatch and recovery steps, see [Reference Patch Application Failure Report](./reference-patch-application-failure-report.md).
 
 1. The frontend loads `GET /api/v1/projects/:id/task-context`. For each repository attached to the project, the backend finds the latest completed analysis for that association's currently selected commit and verifies that its snapshot is still ready. The API returns analysis IDs, roles, module names, and readiness, but never returns local checkout paths.
 2. Select one or more ready component analyses, enter an optional task idea, category, difficulty, constraints, and suggestion count, choose **OpenRouter** or **Ollama**, then request suggestions. The backend checks that each selected analysis belongs to the project and matches the project's pinned commit before creating a generation-history row.
@@ -316,7 +318,7 @@ Invoke-WebRequest -UseBasicParsing http://localhost:5173/health
 5. In a completed report, use **Overview**, **Feature map**, **File structure**, and **Module map** to inspect the saved snapshot. The maps are based on detected source directories (including nested layouts such as `backend/src` and `frontend/src`); the scanner does not execute repository code or infer product features with an LLM.
 6. Open **Task Generator**, select one or more ready analyses for the project's currently selected commit, and enter the task-generation preferences. Review and edit the source-grounded suggestions, then save chosen drafts.
 7. Open **Task Library** to list saved drafts. Select a task to review its baseline/evidence and version history; editing a saved task creates a new version.
-8. In the selected task's **Reference implementation** panel, generate a file-by-file plan, patch bundle, and test files. The reference uses the provider from the task-generation run. Review the artifacts and record manual build/test results; ForgeBench does not apply or execute generated code.
+8. In the selected task's **Reference implementation** panel, generate a file-by-file plan, patch bundle, and test files. The reference uses the provider from the task-generation run. The backend checks each generated patch against its pinned snapshot before marking the reference ready for review. Apply passing patches to a separate copy, download it, run reviewed build/test commands in your controlled environment, and record the results. ForgeBench does not execute repository code.
 
 Reports are immutable records of their analyzed snapshot and analyzer version. If you select a different commit or want to use an updated analyzer, start a new analysis; an older saved report is not rewritten.
 
@@ -365,6 +367,8 @@ Backend configuration is read from `apps/backend/.env` (copy `.env.example` firs
 | `OLLAMA_CONTEXT_LENGTH` | Context window configured on the optional Ollama container (default `16384`) |
 | `TASK_CONTEXT_TOKEN_BUDGET` | Approximate source-context token budget (default `10000`) |
 | `TASK_OUTPUT_TOKEN_BUDGET` | Provider task-generation output token budget (default `3000`) |
+
+When `OPENROUTER_API_KEY` is stored in `apps/backend/.env`, start or recreate the AI service with `docker compose --env-file apps\backend\.env ...`. The backend's service-level `env_file` only configures the backend container; Compose needs `--env-file` to interpolate the key into the AI-service environment.
 
 The example leaves `GITHUB_TOKEN` blank. Without authentication, GitHub limits public REST API requests by the shared client IP; set a token only in `apps/backend/.env` to authenticate public repository search, branch, and commit requests. Keep the token local and do not commit it. If GitHub rejects configured credentials, the API returns an actionable upstream error instead of a generic 500. Revoke and replace any credential that has been committed or shared. The token is not used to access private repositories; private repository access continues to require the GitHub App allowlist.
 

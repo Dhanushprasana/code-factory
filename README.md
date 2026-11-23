@@ -20,7 +20,7 @@ ForgeBench is a local prototype for repository-grounded coding benchmarks. Imple
 - Analyze a ready snapshot asynchronously and save reports by commit.
 - Explore overview metrics, detected feature/source areas, file structure, and a static module map.
 - Retrieve bounded source context from selected analyzed baselines, choose OpenRouter or Ollama for task suggestions, review/edit them, and save versioned task drafts.
-- Generate provider-consistent reference plans, repository-specific patch/test proposals, and review version history. Generated code is not applied or run by ForgeBench; build/test status must be manually recorded before approval.
+- Generate provider-consistent reference plans, repository-specific patches/tests, and review version history. Apply patches to a separate copy of the pinned snapshot, download it, then record manually run build/test results before approval.
 
 The analyzer inspects repository files and manifests without running repository code, installing dependencies, or executing tests. Task and reference generation use bounded keyword/structure/static-graph retrieval (not vector search). OpenRouter sends selected excerpts to its hosted model and requires an API key; Ollama can process the excerpts on a configured local model endpoint. Reference builds/tests are not run in ForgeBench; coding-agent execution and benchmark evaluation are not implemented end-to-end.
 
@@ -49,9 +49,9 @@ Open the UI and follow this session:
 3. Select **Clone snapshot** and wait for `ready`. The checkout is pinned to the chosen full commit SHA.
 4. Select **Analyze**. When the run completes, review **Overview**, **Feature map**, **File structure**, and **Module map**.
 5. Open **Task Generator**, select analyzed components and an AI provider, then review and save generated task drafts.
-6. In **Task Library**, select a saved task to review its baseline/version and generate a reference plan, patch bundle, and public test files. The provider selected for the task is reused. ForgeBench does not apply/run the generated code; record manual validation before approving it.
+6. In **Task Library**, select a saved task to review its baseline/version and generate a reference plan, patch bundle, and public test files. Apply the bundle to an isolated copy and download it. ForgeBench never executes repository build/test scripts; run them after review and record the results before approval.
 
-For OpenRouter, set `OPENROUTER_API_KEY` in `apps\backend\.env`. For Ollama, set the endpoint/model and optionally start the Compose `ollama` profile. See [apps/docs/README.md](apps/docs/README.md) for provider setup, local-model commands, and the full run session.
+For OpenRouter, set `OPENROUTER_API_KEY` in `apps\backend\.env`. When starting or recreating the AI service, include `--env-file apps\backend\.env`; the backend's `env_file` setting alone does not pass that file's variables to the AI-service container. For Ollama, set the endpoint/model and optionally start the Compose `ollama` profile. See [apps/docs/README.md](apps/docs/README.md) for provider setup, local-model commands, and the full run session.
 
 Public GitHub requests work without authentication subject to GitHub's shared quota. For a higher quota, set `GITHUB_TOKEN` only in the ignored `apps\backend\.env`. Private repository access requires a GitHub App with **Contents: read-only** and **Metadata: read-only** permissions, installed only on repositories ForgeBench should access. Never put credentials in `.env.example` or commit `.env`.
 

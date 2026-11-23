@@ -8,7 +8,13 @@ export class ReferenceSolutionsProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<{ referenceId: string }>): Promise<void> {
+  async process(job: Job<{ referenceId: string; runId?: string }>): Promise<void> {
+    if (job.name === 'validate') {
+      if (job.data.runId) {
+        await this.referenceSolutions.processValidation(job.data.referenceId, job.data.runId);
+      }
+      return;
+    }
     await this.referenceSolutions.processGeneration(job.data.referenceId);
   }
 }

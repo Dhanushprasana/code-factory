@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from app.context_engine import build_task_context
 
 
-PROMPT_VERSION = "task-factory-v1"
+PROMPT_VERSION = "task-factory-v2"
 TASK_CATEGORIES = (
     "feature",
     "bug_fix",
@@ -128,23 +128,32 @@ def _task_response_schema(count: int, context: dict[str, Any]) -> dict[str, Any]
     if allowed_modules:
         candidate_schema["properties"]["affected_modules"]["items"]["enum"] = allowed_modules
     candidate_schema.pop("$defs")
+    evidence_fields = (
+        "repository_id",
+        "snapshot_id",
+        "commit_sha",
+        "file_path",
+        "start_line",
+        "end_line",
+        "symbol",
+    )
+    evidence = [
+        {key: chunk[key] for key in evidence_fields}
+        for repository in context["repositories"]
+        for chunk in repository["chunks"]
+    ]
+    evidence_properties: dict[str, Any] = {}
+    for key in evidence_fields:
+        values = list(dict.fromkeys(item[key] for item in evidence))
+        value_type = "integer" if key in {"start_line", "end_line"} else "string"
+        if key == "symbol":
+            value_type = ["string", "null"]
+        evidence_properties[key] = {"type": value_type, "enum": values}
     candidate_schema["properties"]["evidence"]["items"] = {
-        "enum": [
-            {
-                key: chunk[key]
-                for key in (
-                    "repository_id",
-                    "snapshot_id",
-                    "commit_sha",
-                    "file_path",
-                    "start_line",
-                    "end_line",
-                    "symbol",
-                )
-            }
-            for repository in context["repositories"]
-            for chunk in repository["chunks"]
-        ],
+        "type": "object",
+        "properties": evidence_properties,
+        "required": list(evidence_fields),
+        "additionalProperties": False,
     }
     return {
         "type": "object",
@@ -196,9 +205,16 @@ def _validate_candidates(
         try:
             candidate = TaskCandidate.model_validate(value)
         except ValidationError as error:
+            invalid_fields = ", ".join(
+                f"{'.'.join(str(part) for part in issue['loc']) or '<root>'} ({issue['type']})"
+                for issue in error.errors()[:5]
+            )
             raise HTTPException(
                 status_code=502,
-                detail="The AI provider returned a task that did not match the required schema.",
+                detail=(
+                    "The AI provider returned a task that did not match the required schema. "
+                    f"Invalid fields: {invalid_fields}."
+                ),
             ) from error
         if candidate.category not in allowed_categories or candidate.difficulty not in allowed_difficulties:
             continue
@@ -254,11 +270,20 @@ async def _request_chat_completions(
         response_format = {
             "type": "json_schema",
             "json_schema": {
-                "name": "task_suggestions",
+                "name": "structured_response",
                 "strict": True,
                 "schema": response_schema,
             },
         }
+    request_body = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "temperature": 0.2,
+        "response_format": response_format,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    if provider == "openrouter" and response_schema is not None:
+        request_body["provider"] = {"require_parameters": True}
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(timeout_seconds, connect=10.0),
@@ -266,13 +291,7 @@ async def _request_chat_completions(
             response = await client.post(
                 f"{base_url.rstrip('/')}/chat/completions",
                 headers=headers,
-                json={
-                    "model": model,
-                    "max_tokens": max_tokens,
-                    "temperature": 0.2,
-                    "response_format": response_format,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
+                json=request_body,
             )
     except httpx.TimeoutException as error:
         raise HTTPException(
@@ -346,7 +365,10 @@ async def generate_task_suggestions(request: TaskGenerationRequest) -> TaskGener
         if not api_key:
             raise HTTPException(
                 status_code=503,
-                detail="OpenRouter requires OPENROUTER_API_KEY. Configure it in apps/backend/.env.",
+                detail=(
+                    "OpenRouter requires OPENROUTER_API_KEY. Set it in apps/backend/.env "
+                    "and start Docker Compose with --env-file apps/backend/.env."
+                ),
             )
         model = _env_setting("OPENROUTER_MODEL", "openai/gpt-4o-mini")
         base_url = _env_setting("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
@@ -391,7 +413,7 @@ async def generate_task_suggestions(request: TaskGenerationRequest) -> TaskGener
         prompt,
         output_token_budget,
         api_key,
-        _task_response_schema(request.count, context) if request.provider == "ollama" else None,
+        _task_response_schema(request.count, context),
     )
     response_data = _extract_json(text)
     tasks = _validate_candidates(response_data.get("tasks"), request, context)
