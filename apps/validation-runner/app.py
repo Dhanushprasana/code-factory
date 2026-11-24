@@ -551,8 +551,18 @@ def evaluate_harbor_task(
         formatted_model = f"openai/{request.model_name}"
 
     # Synthesize job.yaml for Harbor job orchestration
+    job_id = f"eval-{request.evaluation_id}"
+    job_dir = package_dir / "jobs" / job_id
+    if job_dir.exists():
+        shutil.rmtree(job_dir, ignore_errors=True)
+
+    # Also clean up any legacy task-level job lock directories
+    legacy_job_dir = package_dir / "jobs" / f"eval-{request.task_id}"
+    if legacy_job_dir.exists():
+        shutil.rmtree(legacy_job_dir, ignore_errors=True)
+
     job_yaml_path = package_dir / "job.yaml"
-    job_yaml_content = f"""job_name: eval-{request.task_id}
+    job_yaml_content = f"""job_name: {job_id}
 jobs_dir: jobs
 n_attempts: 1
 
@@ -617,20 +627,26 @@ environment:
             trajectory_logs.append(f"\n[stderr]\n{stderr}")
 
         # Check reward from verifier log file or harbor output
-        reward_file = package_dir / "logs" / "verifier" / "reward.txt"
-        alt_reward_file = ARTIFACT_ROOT / "logs" / "verifier" / "reward.txt"
-        if reward_file.exists():
+        reward_candidates = list(package_dir.glob("**/reward.txt")) + list(ARTIFACT_ROOT.glob("logs/verifier/reward.txt"))
+        for rf in reward_candidates:
             try:
-                reward = float(reward_file.read_text(encoding="utf-8").strip())
+                reward = float(rf.read_text(encoding="utf-8").strip())
+                break
             except Exception:
                 pass
-        elif alt_reward_file.exists():
+        else:
+            if proc.returncode == 0:
+                reward = 1.0
+
+        # Capture any agent trajectory logs (e.g. aider.txt, aider.chat.history.md)
+        agent_logs = list(package_dir.glob("**/aider.txt")) + list(package_dir.glob("**/aider.chat.history.md"))
+        for al in agent_logs:
             try:
-                reward = float(alt_reward_file.read_text(encoding="utf-8").strip())
+                al_content = al.read_text(encoding="utf-8").strip()
+                if al_content:
+                    trajectory_logs.append(f"\n[{al.name}]\n{al_content}")
             except Exception:
                 pass
-        elif proc.returncode == 0:
-            reward = 1.0
 
         status = "passed" if reward >= 1.0 else "failed"
 
