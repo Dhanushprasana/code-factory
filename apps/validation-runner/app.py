@@ -465,7 +465,20 @@ def _normalize_task_toml(toml_str: str) -> str:
 
 
 def _ensure_dockerfile_agent_dependencies(dockerfile_content: str) -> str:
-    # Harbor agents require bash, curl, git, and coreutils in the target environment container
+    # Harbor agents (like Aider) require bash, curl, git, coreutils, and Python 3.12
+    if "uv python install 3.12" in dockerfile_content:
+        return dockerfile_content
+
+    setup_block = (
+        "\n# Pre-install Python 3.12 & dependencies for Harbor Aider agent\n"
+        "RUN (command -v apk >/dev/null && apk add --no-cache bash curl git coreutils python3) || "
+        "(command -v apt-get >/dev/null && apt-get update && apt-get install -y --no-install-recommends bash curl git coreutils ca-certificates && rm -rf /var/lib/apt/lists/*) || true\n"
+        "RUN (curl -LsSf https://astral.sh/uv/install.sh | sh) && "
+        "/root/.local/bin/uv python install 3.12\n"
+        "ENV PATH=\"/root/.local/bin:$PATH\"\n"
+        "ENV UV_PYTHON_DOWNLOADS=\"always\"\n"
+    )
+
     if "apk add" in dockerfile_content:
         if "bash" not in dockerfile_content:
             dockerfile_content = dockerfile_content.replace(
@@ -476,6 +489,22 @@ def _ensure_dockerfile_agent_dependencies(dockerfile_content: str) -> str:
             dockerfile_content = dockerfile_content.replace(
                 "apt-get install -y", "apt-get install -y bash curl git coreutils"
             )
+
+    if "WORKDIR" in dockerfile_content:
+        dockerfile_content = re.sub(
+            r"(WORKDIR\s+[^\n]+\n)",
+            r"\1" + setup_block,
+            dockerfile_content,
+            count=1,
+        )
+    else:
+        dockerfile_content = re.sub(
+            r"(FROM\s+[^\n]+\n)",
+            r"\1" + setup_block,
+            dockerfile_content,
+            count=1,
+        )
+
     return dockerfile_content
 
 
@@ -565,27 +594,42 @@ def evaluate_harbor_task(
         # Default to aider for openrouter, custom, ollama, and multi-model evaluations
         agent_name = "aider"
 
-    if harness == "anthropic" or "claude" in request.model_name.lower():
+    clean_model = request.model_name
+    base_url = None
+    model_api_key_name = None
+    model_api_format = None
+    skip_model_parsing = False
+
+    if harness in ("anthropic", "claude") or "claude" in request.model_name.lower():
         eval_env["ANTHROPIC_API_KEY"] = request.api_key
-    elif harness == "openai" or "gpt" in request.model_name.lower():
+        model_api_key_name = "ANTHROPIC_API_KEY"
+        clean_model = request.model_name.removeprefix("anthropic/")
+        if agent_name == "aider":
+            base_url = "https://api.anthropic.com/v1"
+            model_api_format = "anthropic_messages"
+            skip_model_parsing = True
+    elif harness in ("openai", "gpt") or "gpt" in request.model_name.lower():
         eval_env["OPENAI_API_KEY"] = request.api_key
-    elif harness == "gemini" or "google" in request.model_name.lower():
+        model_api_key_name = "OPENAI_API_KEY"
+        clean_model = request.model_name.removeprefix("openai/")
+        if agent_name == "aider":
+            base_url = "https://api.openai.com/v1"
+            model_api_format = "openai_chat_completions"
+            skip_model_parsing = True
+    elif harness in ("gemini", "google") or "gemini" in request.model_name.lower():
         eval_env["GEMINI_API_KEY"] = request.api_key
+        model_api_key_name = "GEMINI_API_KEY"
+        clean_model = request.model_name.removeprefix("gemini/")
     else:
         eval_env["OPENROUTER_API_KEY"] = request.api_key
+        base_url = "https://openrouter.ai/api/v1"
+        model_api_key_name = "OPENROUTER_API_KEY"
+        model_api_format = "openai_chat_completions"
+        skip_model_parsing = True
+        clean_model = request.model_name.removeprefix("openrouter/")
 
     eval_env["HARBOR_TASK_DIR"] = str(package_dir)
-    eval_env["HARBOR_MODEL"] = request.model_name
-
-    # Format model identifier with provider prefix if needed by LiteLLM / Harbor
-    formatted_model = request.model_name
-    if (harness == "openrouter" or agent_name == "aider") and not request.model_name.startswith("openrouter/"):
-        if eval_env.get("OPENROUTER_API_KEY"):
-            formatted_model = f"openrouter/{request.model_name}"
-    elif harness == "anthropic" and not request.model_name.startswith("anthropic/"):
-        formatted_model = f"anthropic/{request.model_name}"
-    elif harness == "openai" and not request.model_name.startswith("openai/"):
-        formatted_model = f"openai/{request.model_name}"
+    eval_env["HARBOR_MODEL"] = clean_model
 
     # Synthesize job.yaml for Harbor job orchestration
     job_id = f"eval-{request.evaluation_id}"
@@ -598,18 +642,34 @@ def evaluate_harbor_task(
     if legacy_job_dir.exists():
         shutil.rmtree(legacy_job_dir, ignore_errors=True)
 
+    agent_lines = [
+        f"  - name: {agent_name}",
+        f"    model_name: {clean_model}",
+    ]
+    if base_url:
+        agent_lines.append(f"    base_url: {base_url}")
+    if model_api_key_name:
+        agent_lines.append(f"    model_api_key_name: {model_api_key_name}")
+    if model_api_format:
+        agent_lines.append(f"    model_api_format: {model_api_format}")
+    if skip_model_parsing:
+        agent_lines.append("    skip_model_parsing: true")
+
+    agents_yaml_block = "\n".join(agent_lines)
+
     job_yaml_path = package_dir / "job.yaml"
-    job_yaml_content = f"""job_name: {job_id}
+    job_yaml_content = f"""schema_version: 1
+job_name: {job_id}
 jobs_dir: jobs
+n_concurrent_trials: 1
 n_attempts: 1
+timeout_multiplier: 2.0
 
 tasks:
   - path: "{package_dir.as_posix()}"
 
 agents:
-  - name: "{agent_name}"
-    model_name: "{formatted_model}"
-    timeout: {request.timeout_seconds}
+{agents_yaml_block}
 
 environment:
   type: docker
@@ -620,7 +680,7 @@ environment:
         "Starting Harbor evaluation for task %s with agent %s on model %s (job.yaml generated)",
         request.task_id,
         agent_name,
-        formatted_model,
+        clean_model,
     )
 
     trajectory_logs = []
