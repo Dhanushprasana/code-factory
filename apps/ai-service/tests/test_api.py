@@ -444,11 +444,89 @@ def test_task_suggestion_uses_selected_provider_and_returns_provenance(
     assert payload["model"] == model
     assert payload["tasks"][0]["affected_modules"] == ["orders"]
     assert payload["tasks"][0]["evidence"][0]["commit_sha"] == "abc1234"
+    assert payload["tasks"][0]["harbor_files"] is not None
+    assert "schema_version = \"1.4\"" in payload["tasks"][0]["harbor_files"]["task_toml"]
+    assert payload["tasks"][0]["harbor_files"]["instruction_md"]
+    assert payload["tasks"][0]["harbor_files"]["dockerfile"]
+    assert payload["tasks"][0]["harbor_files"]["solve_sh"]
+    assert payload["tasks"][0]["harbor_files"]["test_sh"]
     assert payload["context_manifest"]["retrieval_strategies"] == [
         "keyword",
         "structure",
         "static_graph",
     ]
+
+
+def test_task_generation_includes_context_markdown_in_prompt(monkeypatch, tmp_path):
+    source = tmp_path / "src" / "orders" / "service.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "def cancel_order(order_id):\n    return order_id\n\n"
+        "def find_order(order_id):\n    return None\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENROUTER_API_KEY", "dummy-key")
+
+    captured_prompt = []
+
+    async def fake_provider(
+        selected_provider,
+        selected_base_url,
+        selected_model,
+        prompt,
+        max_tokens,
+        selected_api_key,
+        response_schema,
+    ):
+        captured_prompt.append(prompt)
+        return json.dumps({
+            "tasks": [{
+                "title": "Make order cancellation idempotent",
+                "description": "Ensure repeated cancellation requests do not change an order more than once.",
+                "category": "feature",
+                "difficulty": "medium",
+                "requirements": [
+                    "Cancel an eligible order once.",
+                    "Reject or safely ignore repeated cancellation requests.",
+                ],
+                "acceptance_criteria": [
+                    "The first cancellation changes the order state.",
+                    "A repeated cancellation leaves the final order state unchanged.",
+                ],
+                "constraints": ["Keep cancellation idempotent"],
+                "affected_modules": ["orders"],
+                "evidence": [{
+                    "repository_id": "repository-task-test",
+                    "snapshot_id": "snapshot-task-test",
+                    "commit_sha": "abc1234",
+                    "file_path": "src/orders/service.py",
+                    "start_line": 1,
+                    "end_line": 3,
+                    "symbol": "cancel_order",
+                }],
+                "harbor_files": {
+                    "instruction_md": "# Task: Custom Harbor Instruction\n\nObjective here.",
+                    "task_toml": "schema_version = \"1.4\"\n\n[task]\nname = \"forgebench/custom\"\n",
+                    "dockerfile": "FROM python:3.12-slim\n",
+                    "solve_sh": "#!/bin/bash\nset -e\n",
+                    "test_sh": "#!/bin/bash\necho 1 > /logs/verifier/reward.txt\n",
+                },
+            }],
+        })
+
+    monkeypatch.setattr(task_factory, "_request_chat_completions", fake_provider)
+    req = _task_suggestion_request(str(tmp_path), "openrouter")
+    req["repositories"][0]["context_markdown"] = "# Repository Context Blueprint\nArchitecture: Microservices\n"
+
+    response = client.post("/api/v1/tasks/suggest", json=req)
+    assert response.status_code == 200, response.json()
+    assert len(captured_prompt) == 1
+    assert "Repository Context Blueprint" in captured_prompt[0]
+    assert "Architecture: Microservices" in captured_prompt[0]
+    assert "Harbor Evaluation Framework" in captured_prompt[0]
+    payload = response.json()
+    assert payload["tasks"][0]["harbor_files"]["instruction_md"] == "# Task: Custom Harbor Instruction\n\nObjective here."
+
 
 
 def test_task_schema_errors_report_field_paths_without_echoing_values(tmp_path):

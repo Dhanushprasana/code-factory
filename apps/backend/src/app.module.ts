@@ -17,6 +17,8 @@ import { TasksModule } from './tasks/tasks.module';
 import { CreateTaskFactoryTables1710000000002 } from './database/migrations/1710000000002-CreateTaskFactoryTables';
 import { ReferenceSolutions1795280500000 } from './database/migrations/1795280500000-ReferenceSolutions';
 import { AddContextToRepositoryAnalyses1795280600000 } from './database/migrations/1795280600000-AddContextToRepositoryAnalyses';
+import { AddHarborFilesToTasks1795280700000 } from './database/migrations/1795280700000-AddHarborFilesToTasks';
+import { AddHarborVerificationToTasks1795280800000 } from './database/migrations/1795280800000-AddHarborVerificationToTasks';
 
 @Module({
   imports: [
@@ -47,6 +49,8 @@ import { AddContextToRepositoryAnalyses1795280600000 } from './database/migratio
           CreateTaskFactoryTables1710000000002,
           ReferenceSolutions1795280500000,
           AddContextToRepositoryAnalyses1795280600000,
+          AddHarborFilesToTasks1795280700000,
+          AddHarborVerificationToTasks1795280800000,
         ],
         migrationsRun: true,
         synchronize: true,

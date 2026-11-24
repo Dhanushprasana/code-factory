@@ -67,6 +67,11 @@ export class TasksController {
     return this.tasksService.updateTask(taskId, body);
   }
 
+  @Post('tasks/:id/verify-solution')
+  verifySolution(@Param('id') taskId: string) {
+    return this.tasksService.verifySolution(taskId);
+  }
+
   @Post('tasks/:id/references/generate')
   generateReference(@Param('id') taskId: string, @Body() body: Record<string, unknown>) {
     return this.referenceSolutions.generate(taskId, body);
