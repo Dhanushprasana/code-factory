@@ -485,7 +485,27 @@ def evaluate_harbor_task(
 
     # Set up credentials in environment for Harbor execution
     eval_env = os.environ.copy()
-    harness = (request.harbor_harness or "openrouter").lower()
+    harness = (request.harbor_harness or "aider").lower()
+
+    # Supported Harbor agents from `harbor agent list`
+    VALID_HARBOR_AGENTS = {
+        'aider', 'claude-code', 'codex', 'openhands', 'swe-agent',
+        'gemini-cli', 'cline-cli', 'goose', 'opencode', 'devin',
+        'copilot-cli', 'cursor-cli', 'qwen-coder', 'mini-swe-agent'
+    }
+
+    # Resolve agent runner for Harbor job.yaml
+    if harness in VALID_HARBOR_AGENTS:
+        agent_name = harness
+    elif harness in ("anthropic", "claude") and "claude" in request.model_name.lower():
+        agent_name = "claude-code"
+    elif harness in ("openai", "gpt") and "gpt" in request.model_name.lower():
+        agent_name = "codex"
+    elif harness in ("gemini", "google"):
+        agent_name = "gemini-cli"
+    else:
+        # Default to aider for openrouter, custom, ollama, and multi-model evaluations
+        agent_name = "aider"
 
     if harness == "anthropic" or "claude" in request.model_name.lower():
         eval_env["ANTHROPIC_API_KEY"] = request.api_key
@@ -499,10 +519,11 @@ def evaluate_harbor_task(
     eval_env["HARBOR_TASK_DIR"] = str(package_dir)
     eval_env["HARBOR_MODEL"] = request.model_name
 
-    # Format model identifier with harness prefix if needed by Harbor's LiteLLM backend
+    # Format model identifier with provider prefix if needed by LiteLLM / Harbor
     formatted_model = request.model_name
-    if harness == "openrouter" and not request.model_name.startswith("openrouter/"):
-        formatted_model = f"openrouter/{request.model_name}"
+    if (harness == "openrouter" or agent_name == "aider") and not request.model_name.startswith("openrouter/"):
+        if eval_env.get("OPENROUTER_API_KEY"):
+            formatted_model = f"openrouter/{request.model_name}"
     elif harness == "anthropic" and not request.model_name.startswith("anthropic/"):
         formatted_model = f"anthropic/{request.model_name}"
     elif harness == "openai" and not request.model_name.startswith("openai/"):
@@ -518,7 +539,7 @@ tasks:
   - path: "{package_dir.as_posix()}"
 
 agents:
-  - name: "{harness}"
+  - name: "{agent_name}"
     model_name: "{formatted_model}"
     timeout: {request.timeout_seconds}
 
@@ -528,10 +549,10 @@ environment:
     job_yaml_path.write_text(job_yaml_content, encoding="utf-8")
 
     logger.info(
-        "Starting Harbor evaluation for task %s with model %s (harness: %s, job.yaml generated)",
+        "Starting Harbor evaluation for task %s with agent %s on model %s (job.yaml generated)",
         request.task_id,
+        agent_name,
         formatted_model,
-        harness,
     )
 
     trajectory_logs = []

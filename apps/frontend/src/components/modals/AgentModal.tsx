@@ -192,11 +192,13 @@ export function AgentModal({
           <label style={{ margin: 0, marginTop: 12 }}>
             Harbor Eval Harness
             <select value={harborHarness} onChange={e => setHarborHarness(e.target.value)}>
-              <option value="openrouter">OpenRouter (Multi-model)</option>
-              <option value="anthropic">Anthropic (Claude)</option>
-              <option value="openai">OpenAI (Codex / GPT-4)</option>
-              <option value="gemini">Google Gemini</option>
-              <option value="ollama">Ollama / Local</option>
+              <option value="aider">Aider (Multi-model / OpenRouter / Recommended)</option>
+              <option value="claude-code">Claude Code (Anthropic)</option>
+              <option value="codex">Codex (OpenAI)</option>
+              <option value="openhands">OpenHands</option>
+              <option value="gemini-cli">Gemini CLI</option>
+              <option value="cline-cli">Cline CLI</option>
+              <option value="openrouter">OpenRouter (via Aider)</option>
             </select>
           </label>
 
