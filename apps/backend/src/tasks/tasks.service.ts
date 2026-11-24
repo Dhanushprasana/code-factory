@@ -981,7 +981,11 @@ export class TasksService {
       fs.writeFileSync(path.join(targetDir, 'instruction.md'), harborFiles.instruction_md, 'utf8');
     }
     if (typeof harborFiles.task_toml === 'string') {
-      fs.writeFileSync(path.join(targetDir, 'task.toml'), harborFiles.task_toml, 'utf8');
+      const normalizedToml = harborFiles.task_toml.replace(
+        /(\bname\s*=\s*)(["'])([^"']+)(["'])/,
+        (match, prefix, q1, val, q2) => (val.includes('/') ? match : `${prefix}${q1}forgebench/${val}${q2}`),
+      );
+      fs.writeFileSync(path.join(targetDir, 'task.toml'), normalizedToml, 'utf8');
     }
     if (typeof harborFiles.dockerfile === 'string') {
       fs.writeFileSync(path.join(targetDir, 'environment', 'Dockerfile'), harborFiles.dockerfile, 'utf8');

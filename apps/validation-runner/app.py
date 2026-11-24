@@ -451,6 +451,19 @@ class HarborEvaluationRequest(BaseModel):
     harbor_files: dict[str, str] | None = None
 
 
+def _normalize_task_toml(toml_str: str) -> str:
+    def _repl(match):
+        prefix = match.group(1)
+        q1 = match.group(2)
+        val = match.group(3)
+        q2 = match.group(4)
+        if "/" not in val:
+            val = f"forgebench/{val}"
+        return f"{prefix}{q1}{val}{q2}"
+
+    return re.sub(r'(\bname\s*=\s*)(["\'])([^"\']+)(["\'])', _repl, toml_str, count=1)
+
+
 @app.post("/harbor/evaluate")
 def evaluate_harbor_task(
     request: HarborEvaluationRequest,
@@ -469,7 +482,7 @@ def evaluate_harbor_task(
         if h.get("instruction_md"):
             (package_dir / "instruction.md").write_text(h["instruction_md"], encoding="utf-8")
         if h.get("task_toml"):
-            (package_dir / "task.toml").write_text(h["task_toml"], encoding="utf-8")
+            (package_dir / "task.toml").write_text(_normalize_task_toml(h["task_toml"]), encoding="utf-8")
         if h.get("dockerfile"):
             env_dir = package_dir / "environment"
             env_dir.mkdir(exist_ok=True)
@@ -482,6 +495,14 @@ def evaluate_harbor_task(
             test_dir = package_dir / "tests"
             test_dir.mkdir(exist_ok=True)
             (test_dir / "test.sh").write_text(h["test_sh"], encoding="utf-8")
+
+    # Ensure task.toml on disk adheres to Harbor's required org/name package naming
+    task_toml_path = package_dir / "task.toml"
+    if task_toml_path.exists():
+        current_toml = task_toml_path.read_text(encoding="utf-8")
+        normalized_toml = _normalize_task_toml(current_toml)
+        if normalized_toml != current_toml:
+            task_toml_path.write_text(normalized_toml, encoding="utf-8")
 
     # Set up credentials in environment for Harbor execution
     eval_env = os.environ.copy()
