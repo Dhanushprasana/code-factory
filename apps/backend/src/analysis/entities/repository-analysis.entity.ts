@@ -52,6 +52,15 @@ export class RepositoryAnalysisEntity {
   @Column({ name: 'error_message', type: 'text', nullable: true })
   errorMessage: string | null;
 
+  @Column({ name: 'context_markdown', type: 'text', nullable: true })
+  contextMarkdown: string | null;
+
+  @Column({ name: 'context_status', type: 'varchar', length: 24, nullable: true, default: 'pending' })
+  contextStatus: string | null;
+
+  @Column({ name: 'context_error', type: 'text', nullable: true })
+  contextError: string | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 

@@ -32,4 +32,14 @@ export class AnalysisController {
   getGraph(@Param('id') analysisId: string) {
     return this.analysisService.getGraph(analysisId);
   }
+
+  @Post('analyses/:id/context')
+  startContext(@Param('id') analysisId: string) {
+    return this.analysisService.startContextGeneration(analysisId);
+  }
+
+  @Get('analyses/:id/context.md')
+  async getContextMarkdown(@Param('id') analysisId: string) {
+    return this.analysisService.getContextMarkdown(analysisId);
+  }
 }
