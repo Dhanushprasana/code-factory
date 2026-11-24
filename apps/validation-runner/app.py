@@ -465,30 +465,30 @@ def _normalize_task_toml(toml_str: str) -> str:
 
 
 def _ensure_dockerfile_agent_dependencies(dockerfile_content: str) -> str:
-    # Harbor agents (like Aider) require bash, curl, git, coreutils, and Python 3.12
-    if "uv python install 3.12" in dockerfile_content:
+    """Inject aider pre-installation into task environment Dockerfiles.
+
+    Strategy: install uv + Python 3.12 + aider-chat at image build time so
+    Harbor's trial setup can skip the slow per-trial aider.chat/install.sh script
+    (we set skip_install: true in job.yaml). This avoids the conflict where
+    aider's install.sh downloads its own old uv (0.5.x) which cannot find the
+    Python 3.12 managed by the newer uv we installed (0.13.x).
+    """
+    if "aider-chat" in dockerfile_content:
+        # Already patched
         return dockerfile_content
 
     setup_block = (
-        "\n# Pre-install Python 3.12 & dependencies for Harbor Aider agent\n"
-        "RUN (command -v apk >/dev/null && apk add --no-cache bash curl git coreutils python3) || "
-        "(command -v apt-get >/dev/null && apt-get update && apt-get install -y --no-install-recommends bash curl git coreutils ca-certificates && rm -rf /var/lib/apt/lists/*) || true\n"
-        "RUN (curl -LsSf https://astral.sh/uv/install.sh | sh) && "
-        "/root/.local/bin/uv python install 3.12\n"
+        "\n# Pre-install aider for Harbor agent (skip_install: true in job.yaml)\n"
+        "RUN (command -v apk >/dev/null 2>&1 && apk add --no-cache bash curl git coreutils python3 py3-pip) || \\\n"
+        "    (command -v apt-get >/dev/null 2>&1 && apt-get update -qq && \\\n"
+        "     apt-get install -y --no-install-recommends bash curl git coreutils ca-certificates python3 python3-pip && \\\n"
+        "     rm -rf /var/lib/apt/lists/*) || true\n"
+        "RUN curl -LsSf https://astral.sh/uv/install.sh | sh\n"
         "ENV PATH=\"/root/.local/bin:$PATH\"\n"
-        "ENV UV_PYTHON_DOWNLOADS=\"always\"\n"
+        "RUN uv python install 3.12 && \\\n"
+        "    uv tool install --python 3.12 aider-chat && \\\n"
+        "    ln -sf /root/.local/bin/aider /usr/local/bin/aider\n"
     )
-
-    if "apk add" in dockerfile_content:
-        if "bash" not in dockerfile_content:
-            dockerfile_content = dockerfile_content.replace(
-                "apk add --no-cache", "apk add --no-cache bash curl git coreutils"
-            ).replace("apk add", "apk add --no-cache bash curl git coreutils")
-    elif "apt-get install" in dockerfile_content:
-        if "bash" not in dockerfile_content or "curl" not in dockerfile_content:
-            dockerfile_content = dockerfile_content.replace(
-                "apt-get install -y", "apt-get install -y bash curl git coreutils"
-            )
 
     if "WORKDIR" in dockerfile_content:
         dockerfile_content = re.sub(
@@ -654,6 +654,11 @@ def evaluate_harbor_task(
         agent_lines.append(f"    model_api_format: {model_api_format}")
     if skip_model_parsing:
         agent_lines.append("    skip_model_parsing: true")
+    # aider is pre-installed in the task environment Dockerfile; skip Harbor's
+    # per-trial aider.chat/install.sh to avoid uv version conflicts
+    if agent_name == "aider":
+        agent_lines.append("    kwargs:")
+        agent_lines.append("      skip_install: true")
 
     agents_yaml_block = "\n".join(agent_lines)
 
