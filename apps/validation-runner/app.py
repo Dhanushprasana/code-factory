@@ -540,7 +540,15 @@ def evaluate_harbor_task(
         if h.get("test_sh"):
             test_dir = package_dir / "tests"
             test_dir.mkdir(exist_ok=True)
-            (test_dir / "test.sh").write_text(h["test_sh"], encoding="utf-8")
+            test_sh_content = h["test_sh"]
+            if "trap " not in test_sh_content and "/logs/verifier/reward.txt" in test_sh_content:
+                test_sh_content = re.sub(
+                    r"^(#!/[^\n]+\n)",
+                    r'\1mkdir -p /logs/verifier\ntrap \'if [ ! -f /logs/verifier/reward.txt ]; then echo 0 > /logs/verifier/reward.txt; fi\' EXIT\n',
+                    test_sh_content,
+                    count=1,
+                )
+            (test_dir / "test.sh").write_text(test_sh_content, encoding="utf-8")
 
     # Ensure task.toml on disk adheres to Harbor's required org/name package naming
     task_toml_path = package_dir / "task.toml"
@@ -774,7 +782,7 @@ environment:
 
         # Check reward from verifier log file if not already determined from result.json
         if reward == 0.0 and not has_error:
-            reward_candidates = list(package_dir.glob("**/reward.txt")) + list(ARTIFACT_ROOT.glob("logs/verifier/reward.txt"))
+            reward_candidates = list(job_dir.glob("**/reward.txt"))
             for rf in reward_candidates:
                 try:
                     reward = float(rf.read_text(encoding="utf-8").strip())
@@ -782,8 +790,16 @@ environment:
                 except Exception:
                     pass
 
-        # Capture any agent trajectory logs (e.g. aider.txt, aider.chat.history.md)
-        agent_logs = list(package_dir.glob("**/aider.txt")) + list(package_dir.glob("**/aider.chat.history.md"))
+        # Capture verifier stdout for the current job
+        verifier_logs = list(job_dir.glob("**/test-stdout.txt"))
+        test_output = "\n".join(
+            vl.read_text(encoding="utf-8", errors="replace").strip()
+            for vl in verifier_logs
+            if vl.is_file()
+        ).strip()
+
+        # Capture agent trajectory logs for the current job only (e.g. aider.txt, aider.chat.history.md)
+        agent_logs = list(job_dir.glob("**/aider.txt")) + list(job_dir.glob("**/aider.chat.history.md"))
         for al in agent_logs:
             try:
                 al_content = al.read_text(encoding="utf-8").strip()
