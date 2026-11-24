@@ -464,6 +464,21 @@ def _normalize_task_toml(toml_str: str) -> str:
     return re.sub(r'(\bname\s*=\s*)(["\'])([^"\']+)(["\'])', _repl, toml_str, count=1)
 
 
+def _ensure_dockerfile_agent_dependencies(dockerfile_content: str) -> str:
+    # Harbor agents require bash, curl, git, and coreutils in the target environment container
+    if "apk add" in dockerfile_content:
+        if "bash" not in dockerfile_content:
+            dockerfile_content = dockerfile_content.replace(
+                "apk add --no-cache", "apk add --no-cache bash curl git coreutils"
+            ).replace("apk add", "apk add --no-cache bash curl git coreutils")
+    elif "apt-get install" in dockerfile_content:
+        if "bash" not in dockerfile_content or "curl" not in dockerfile_content:
+            dockerfile_content = dockerfile_content.replace(
+                "apt-get install -y", "apt-get install -y bash curl git coreutils"
+            )
+    return dockerfile_content
+
+
 @app.post("/harbor/evaluate")
 def evaluate_harbor_task(
     request: HarborEvaluationRequest,
@@ -486,7 +501,7 @@ def evaluate_harbor_task(
         if h.get("dockerfile"):
             env_dir = package_dir / "environment"
             env_dir.mkdir(exist_ok=True)
-            (env_dir / "Dockerfile").write_text(h["dockerfile"], encoding="utf-8")
+            (env_dir / "Dockerfile").write_text(_ensure_dockerfile_agent_dependencies(h["dockerfile"]), encoding="utf-8")
         if h.get("solve_sh"):
             sol_dir = package_dir / "solution"
             sol_dir.mkdir(exist_ok=True)
@@ -504,9 +519,16 @@ def evaluate_harbor_task(
         if normalized_toml != current_toml:
             task_toml_path.write_text(normalized_toml, encoding="utf-8")
 
-    # Ensure environment directory has codebase snapshot files if Dockerfile copies them
+    # Ensure environment directory has codebase snapshot files and Harbor dependencies
     env_dir = package_dir / "environment"
     env_dir.mkdir(exist_ok=True)
+    dockerfile_file = env_dir / "Dockerfile"
+    if dockerfile_file.exists():
+        df_content = dockerfile_file.read_text(encoding="utf-8")
+        patched_df = _ensure_dockerfile_agent_dependencies(df_content)
+        if patched_df != df_content:
+            dockerfile_file.write_text(patched_df, encoding="utf-8")
+
     repo_dirs = list((ARTIFACT_ROOT / "repositories").glob("*/*"))
     if repo_dirs and len([p for p in env_dir.iterdir() if p.name != "Dockerfile"]) == 0:
         latest_repo = repo_dirs[0]
