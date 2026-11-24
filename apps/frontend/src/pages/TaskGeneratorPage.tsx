@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ClipboardList, History, Sparkles } from 'lucide-react';
+import { Box, ClipboardList, Code2, FileText, History, Settings, Sparkles, Terminal } from 'lucide-react';
 import { apiUrl, request } from '../api/client';
 import { PageHeader } from '../components/common/PageHeader';
 import {
@@ -23,6 +23,7 @@ export function TaskGeneratorPage() {
   const [generation, setGeneration] = useState<TaskGeneration | null>(null);
   const [candidateIndex, setCandidateIndex] = useState(0);
   const [draft, setDraft] = useState<TaskCandidate | null>(null);
+  const [harborTab, setHarborTab] = useState<'instruction' | 'toml' | 'docker' | 'solution' | 'verifier'>('instruction');
   const [idea, setIdea] = useState('');
   const [provider, setProvider] = useState<TaskProvider | ''>('');
   const [category, setCategory] = useState('feature');
@@ -147,6 +148,26 @@ export function TaskGeneratorPage() {
     setNotice(`Loaded generation from ${new Date(selected.createdAt).toLocaleString()}.`);
   };
 
+  const changeHarborFile = (field: 'instruction_md' | 'task_toml' | 'dockerfile' | 'solve_sh' | 'test_sh', value: string) => {
+    setDraft(current => {
+      if (!current) return current;
+      const hFiles = current.harbor_files ?? {
+        instruction_md: '',
+        task_toml: '',
+        dockerfile: '',
+        solve_sh: '',
+        test_sh: '',
+      };
+      return {
+        ...current,
+        harbor_files: {
+          ...hFiles,
+          [field]: value,
+        },
+      };
+    });
+  };
+
   const saveDraft = async () => {
     if (!generation || !draft || !projectId) return;
     setSaving(true);
@@ -166,6 +187,7 @@ export function TaskGeneratorPage() {
           acceptanceCriteria: draft.acceptance_criteria,
           constraints: draft.constraints,
           affectedModules: draft.affected_modules,
+          harborFiles: draft.harbor_files,
         }),
       });
       navigate(`/tasks/${saved.id}`);
@@ -183,8 +205,8 @@ export function TaskGeneratorPage() {
   return (
     <div className="page task-workspace">
       <PageHeader
-        eyebrow="Task creation"
-        title="Task generator"
+        eyebrow="Harbor Evaluation Framework · Benchmark Suite"
+        title="Harbor Task Generator"
         action={
           <button className="secondary-button" onClick={() => navigate('/tasks')}>
             <ClipboardList size={15} /> Task library
@@ -192,8 +214,9 @@ export function TaskGeneratorPage() {
         }
       />
       <p className="task-page-intro">
-        Create task drafts from completed analyses of this project's pinned repository snapshots. Every suggestion keeps
-        file and commit provenance for review.
+        Generate standardized benchmark tasks adhering to the <b>Harbor Evaluation Framework (v1.4 schema)</b>.
+        Every task packages complete agent instructions, isolated sandbox environment (<code>Dockerfile</code>),
+        golden solution script (<code>solve.sh</code>), and an automated reward verifier (<code>tests/test.sh</code> $\rightarrow$ <code>/logs/verifier/reward.txt</code>).
       </p>
       {error && <div className="inline-notice error" role="alert">{error}</div>}
       {notice && <div className="inline-notice" role="status">{notice}</div>}
@@ -201,8 +224,8 @@ export function TaskGeneratorPage() {
         <section className="panel task-form">
           <div className="panel-head">
             <div>
-              <span className="eyebrow">Step 1 · project scope</span>
-              <h2>Task configuration</h2>
+              <span className="eyebrow">Step 1 · Benchmark scope</span>
+              <h2>Harbor task configuration</h2>
             </div>
             <Sparkles size={18} />
           </div>
@@ -335,44 +358,43 @@ export function TaskGeneratorPage() {
               disabled={busy || !selectedAnalysisIds.length || !provider}
             >
               <Sparkles size={16} />
-              {busy ? 'Generating from repository context…' : 'Generate task drafts'}
+              {busy ? 'Architecting Harbor benchmark tasks…' : 'Generate Harbor benchmark tasks'}
             </button>
           </div>
-          <p className="form-hint">Repository code is treated as untrusted input; ForgeBench does not execute it.</p>
+          <p className="form-hint">Harbor packages are automatically stored in the Docker volume and backed by PostgreSQL.</p>
         </section>
         <section className="panel task-guardrails">
           <div className="panel-head">
             <div>
-              <span className="eyebrow">Review before saving</span>
-              <h2>Generation guardrails</h2>
+              <span className="eyebrow">Evaluation Framework Specification</span>
+              <h2>Harbor v1.4 Guardrails</h2>
             </div>
-            <span className="status green">Enabled</span>
+            <span className="status green">v1.4 Spec</span>
           </div>
           <ul className="task-guardrail-list">
             <li>
-              <b>Commit pinned</b>
-              <span>Each draft records the selected repository snapshot and full commit SHA.</span>
+              <b>Harbor Manifest (<code>task.toml</code>)</b>
+              <span>Defines <code>schema_version = "1.4"</code>, verifier/agent timeouts (600s), environment resources (2 CPUs, 4GB RAM), and separate sandbox execution mode.</span>
             </li>
             <li>
-              <b>Source grounded</b>
-              <span>Context uses keyword, structure, and static graph retrieval from completed analysis reports.</span>
+              <b>Isolated Sandbox (<code>environment/Dockerfile</code>)</b>
+              <span>Hermetic Docker container setup ensuring reproducible evaluation across diverse agent harnesses without host pollution.</span>
             </li>
             <li>
-              <b>Measurable criteria</b>
-              <span>Review requirements and acceptance criteria for observable behavior and edge cases.</span>
+              <b>Automated Verifier (<code>tests/test.sh</code>)</b>
+              <span>Executes unit/integration checks and records binary evaluation rewards (<code>1</code> for pass, <code>0</code> for fail) to <code>/logs/verifier/reward.txt</code>.</span>
             </li>
             <li>
-              <b>Human editable</b>
-              <span>Generated wording is a draft. Edit it and save only after review.</span>
+              <b>Golden Solution (<code>solution/solve.sh</code>)</b>
+              <span>Executable reference solution validating task solvability and providing ground truth for benchmark baselines.</span>
             </li>
             <li>
-              <b>No hidden claims</b>
-              <span>Source references and affected modules are validated against the retrieved snapshot context.</span>
+              <b>Architectural Grounding (<code>CONTEXT.md</code>)</b>
+              <span>Grounded in the repository blueprint, detected service modules, and exact commit SHA snapshots.</span>
             </li>
           </ul>
           <div className="demo-notice">
-            Choose OpenRouter for hosted models or Ollama to keep repository context on your local model endpoint. Provider
-            credentials and model names are configured separately in the backend environment.
+            Harbor task packages are written to the Docker volume at <code>storage/harbor-packages/{'{taskId}'}</code> upon saving, complete with export bundle <code>{'{taskId}'}.harbor.json</code>.
           </div>
           <div className="task-history">
             <div className="task-subhead">
@@ -491,40 +513,135 @@ export function TaskGeneratorPage() {
                     />
                   </label>
                   {draft.harbor_files && (
-                    <div className="task-detail-section" style={{ marginTop: 16 }}>
-                      <h3>Harbor Task Package Artifacts</h3>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
-                        <details className="reference-artifact">
-                          <summary>instruction.md</summary>
-                          <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 200, overflow: 'auto', fontSize: 12, padding: 8, background: '#f8fafc' }}>
-                            {draft.harbor_files.instruction_md}
-                          </pre>
-                        </details>
-                        <details className="reference-artifact">
-                          <summary>task.toml (Harbor v1.4)</summary>
-                          <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 150, overflow: 'auto', fontSize: 12, padding: 8, background: '#f8fafc' }}>
-                            {draft.harbor_files.task_toml}
-                          </pre>
-                        </details>
-                        <details className="reference-artifact">
-                          <summary>environment/Dockerfile</summary>
-                          <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 150, overflow: 'auto', fontSize: 12, padding: 8, background: '#f8fafc' }}>
-                            {draft.harbor_files.dockerfile}
-                          </pre>
-                        </details>
-                        <details className="reference-artifact">
-                          <summary>solution/solve.sh</summary>
-                          <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 150, overflow: 'auto', fontSize: 12, padding: 8, background: '#f8fafc' }}>
-                            {draft.harbor_files.solve_sh}
-                          </pre>
-                        </details>
-                        <details className="reference-artifact">
-                          <summary>tests/test.sh (reward verifier)</summary>
-                          <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 150, overflow: 'auto', fontSize: 12, padding: 8, background: '#f8fafc' }}>
-                            {draft.harbor_files.test_sh}
-                          </pre>
-                        </details>
+                    <div className="task-detail-section" style={{ marginTop: 20 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                        <div>
+                          <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <Box size={16} /> Harbor Task Package Artifacts
+                          </h3>
+                          <p className="form-hint" style={{ marginTop: 2 }}>
+                            Standardized Harbor Evaluation Framework (v1.4) benchmark files. Fully editable before saving.
+                          </p>
+                        </div>
+                        <span className="status green">Harbor v1.4</span>
                       </div>
+                      <div className="task-candidate-tabs" role="tablist" style={{ marginBottom: 12 }}>
+                        <button
+                          type="button"
+                          className={harborTab === 'instruction' ? 'selected' : ''}
+                          onClick={() => setHarborTab('instruction')}
+                        >
+                          <FileText size={14} style={{ marginRight: 4, verticalAlign: -2 }} />
+                          instruction.md
+                        </button>
+                        <button
+                          type="button"
+                          className={harborTab === 'toml' ? 'selected' : ''}
+                          onClick={() => setHarborTab('toml')}
+                        >
+                          <Settings size={14} style={{ marginRight: 4, verticalAlign: -2 }} />
+                          task.toml
+                        </button>
+                        <button
+                          type="button"
+                          className={harborTab === 'docker' ? 'selected' : ''}
+                          onClick={() => setHarborTab('docker')}
+                        >
+                          <Box size={14} style={{ marginRight: 4, verticalAlign: -2 }} />
+                          Dockerfile
+                        </button>
+                        <button
+                          type="button"
+                          className={harborTab === 'solution' ? 'selected' : ''}
+                          onClick={() => setHarborTab('solution')}
+                        >
+                          <Code2 size={14} style={{ marginRight: 4, verticalAlign: -2 }} />
+                          solve.sh
+                        </button>
+                        <button
+                          type="button"
+                          className={harborTab === 'verifier' ? 'selected' : ''}
+                          onClick={() => setHarborTab('verifier')}
+                        >
+                          <Terminal size={14} style={{ marginRight: 4, verticalAlign: -2 }} />
+                          test.sh (verifier)
+                        </button>
+                      </div>
+
+                      {harborTab === 'instruction' && (
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                            <span className="form-hint">Agent instructions & problem description provided during evaluation run.</span>
+                            <span className="form-hint">{draft.harbor_files.instruction_md?.length ?? 0} chars</span>
+                          </div>
+                          <textarea
+                            rows={12}
+                            style={{ fontFamily: 'Consolas, monospace', fontSize: 13, background: '#101828', color: '#eaecf0', border: '1px solid #334155', borderRadius: 6, padding: 12, width: '100%' }}
+                            value={draft.harbor_files.instruction_md}
+                            onChange={e => changeHarborFile('instruction_md', e.target.value)}
+                          />
+                        </div>
+                      )}
+
+                      {harborTab === 'toml' && (
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                            <span className="form-hint">Harbor v1.4 manifest ([task], [verifier], [agent], [environment]).</span>
+                            <span className="form-hint">{draft.harbor_files.task_toml?.length ?? 0} chars</span>
+                          </div>
+                          <textarea
+                            rows={10}
+                            style={{ fontFamily: 'Consolas, monospace', fontSize: 13, background: '#101828', color: '#eaecf0', border: '1px solid #334155', borderRadius: 6, padding: 12, width: '100%' }}
+                            value={draft.harbor_files.task_toml}
+                            onChange={e => changeHarborFile('task_toml', e.target.value)}
+                          />
+                        </div>
+                      )}
+
+                      {harborTab === 'docker' && (
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                            <span className="form-hint">Environment container specification (environment/Dockerfile).</span>
+                            <span className="form-hint">{draft.harbor_files.dockerfile?.length ?? 0} chars</span>
+                          </div>
+                          <textarea
+                            rows={12}
+                            style={{ fontFamily: 'Consolas, monospace', fontSize: 13, background: '#101828', color: '#eaecf0', border: '1px solid #334155', borderRadius: 6, padding: 12, width: '100%' }}
+                            value={draft.harbor_files.dockerfile}
+                            onChange={e => changeHarborFile('dockerfile', e.target.value)}
+                          />
+                        </div>
+                      )}
+
+                      {harborTab === 'solution' && (
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                            <span className="form-hint">Reference solution bash script (solution/solve.sh) applied inside container.</span>
+                            <span className="form-hint">{draft.harbor_files.solve_sh?.length ?? 0} chars</span>
+                          </div>
+                          <textarea
+                            rows={12}
+                            style={{ fontFamily: 'Consolas, monospace', fontSize: 13, background: '#101828', color: '#eaecf0', border: '1px solid #334155', borderRadius: 6, padding: 12, width: '100%' }}
+                            value={draft.harbor_files.solve_sh}
+                            onChange={e => changeHarborFile('solve_sh', e.target.value)}
+                          />
+                        </div>
+                      )}
+
+                      {harborTab === 'verifier' && (
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                            <span className="form-hint">Harbor verifier script (tests/test.sh) recording 1 or 0 to /logs/verifier/reward.txt.</span>
+                            <span className="form-hint">{draft.harbor_files.test_sh?.length ?? 0} chars</span>
+                          </div>
+                          <textarea
+                            rows={12}
+                            style={{ fontFamily: 'Consolas, monospace', fontSize: 13, background: '#101828', color: '#eaecf0', border: '1px solid #334155', borderRadius: 6, padding: 12, width: '100%' }}
+                            value={draft.harbor_files.test_sh}
+                            onChange={e => changeHarborFile('test_sh', e.target.value)}
+                          />
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -551,12 +668,12 @@ export function TaskGeneratorPage() {
                   ))}
                   <div className="task-form-actions">
                     <button className="primary-button" onClick={saveDraft} disabled={saving}>
-                      {saving ? 'Saving draft…' : 'Save reviewed draft'}
+                      {saving ? 'Exporting Harbor package…' : 'Save & Export Harbor Package'}
                     </button>
                   </div>
                   <p className="form-hint">
-                    Saving creates task version 1. Later edits create immutable versions and retain the original
-                    commit/context manifest.
+                    Saving creates task version 1, persists Harbor files to Docker volume <code>storage/harbor-packages/{'{taskId}'}</code>,
+                    and creates the export bundle.
                   </p>
                 </aside>
               </div>

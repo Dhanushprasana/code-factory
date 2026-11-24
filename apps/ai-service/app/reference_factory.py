@@ -494,7 +494,7 @@ async def generate_reference_solution(request: ReferenceGenerationRequest) -> di
                 ),
             )
         base_url = _env_setting("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-        model = _env_setting("OPENROUTER_MODEL", "openai/gpt-4o-mini")
+        model = _env_setting("OPENROUTER_MODEL", "nvidia/nemotron-3.5-super-vl:free")
     else:
         api_key = None
         base_url = _env_setting("OLLAMA_BASE_URL", "http://host.docker.internal:11434/v1")

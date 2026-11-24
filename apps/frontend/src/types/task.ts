@@ -53,6 +53,23 @@ export type TaskGeneration = {
   createdAt: string;
 };
 
+export type HarborVerification = {
+  verifiedAt: string;
+  status: 'passed' | 'failed';
+  reward: number;
+  solveResult?: {
+    exitCode: number;
+    output: string;
+    durationMs?: number;
+  } | null;
+  testResult?: {
+    exitCode: number;
+    output: string;
+    durationMs?: number;
+  } | null;
+  error?: string | null;
+};
+
 export type SavedTask = {
   id: string;
   projectId: string;
@@ -73,6 +90,7 @@ export type SavedTask = {
   evidence: TaskCandidate['evidence'];
   harborFiles?: HarborFiles | null;
   harborPackagePath?: string | null;
+  harborVerification?: HarborVerification | null;
   createdAt: string;
   updatedAt: string;
 };

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from typing import Any, Literal
@@ -11,6 +12,8 @@ from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from app.context_engine import build_task_context
+
+logger = logging.getLogger("ai_service.task_factory")
 
 
 PROMPT_VERSION = "task-factory-harbor-v1"
@@ -112,11 +115,15 @@ def _extract_json(text: str) -> dict[str, Any]:
     try:
         result = json.loads(stripped)
     except json.JSONDecodeError as error:
+        print(f"[TASK_FACTORY] Failed to decode JSON from AI response: {error}\nRaw content was:\n{text}\n", flush=True)
+        logger.error("Failed to decode JSON from AI response: %s. Raw text:\n%s", error, text)
         raise HTTPException(
             status_code=502,
-            detail="The selected AI provider returned a task response that was not valid JSON.",
+            detail=f"The selected AI provider returned a task response that was not valid JSON: {stripped[:300]}",
         ) from error
     if not isinstance(result, dict):
+        print(f"[TASK_FACTORY] AI response JSON is not an object: type={type(result)}, content={result}", flush=True)
+        logger.error("AI response JSON is not an object: type=%s, content=%s", type(result), result)
         raise HTTPException(status_code=502, detail="The selected AI provider returned an invalid task response.")
     return result
 
@@ -295,30 +302,28 @@ def _validate_candidates(
     if not isinstance(values, list) or not values:
         raise HTTPException(status_code=502, detail="The AI provider returned no task suggestions.")
     allowed_categories = set(TASK_CATEGORIES)
-    allowed_difficulties = set(TASK_DIFFICULTIES)
     allowed_modules = {
-        value.lower()
+        value.lower(): value
         for repository in context["repositories"]
         for module in repository["modules"]
         for value in (module["name"], module["path"])
         if value
     }
-    allowed_evidence = {
-        (
-            repository["repository_id"],
-            repository["snapshot_id"],
-            repository["commit_sha"],
-            chunk["file_path"],
-            chunk["start_line"],
-            chunk["end_line"],
-            chunk["symbol"],
-        )
-        for repository in context["repositories"]
-        for chunk in repository["chunks"]
-    }
+
+    # Index available chunks by (repository_id, file_path) and by file_path
+    chunks_by_repo_file: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    chunks_by_file: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = {}
+    primary_repo = context["repositories"][0] if context.get("repositories") else None
+    all_chunks: list[tuple[dict[str, Any], dict[str, Any]]] = []
+
+    for repository in context.get("repositories", []):
+        for chunk in repository.get("chunks", []):
+            chunks_by_repo_file.setdefault((repository["repository_id"], chunk["file_path"]), []).append(chunk)
+            chunks_by_file.setdefault(chunk["file_path"], []).append((repository, chunk))
+            all_chunks.append((repository, chunk))
+
     candidates: list[TaskCandidate] = []
     titles: set[str] = set()
-    primary_repo = context["repositories"][0] if context.get("repositories") else None
 
     for value in values[:request.count]:
         try:
@@ -328,6 +333,8 @@ def _validate_candidates(
                 f"{'.'.join(str(part) for part in issue['loc']) or '<root>'} ({issue['type']})"
                 for issue in error.errors()[:5]
             )
+            print(f"[TASK_FACTORY] Candidate schema validation failed: {invalid_fields}", flush=True)
+            logger.warning("Candidate schema validation failed: %s", invalid_fields)
             raise HTTPException(
                 status_code=502,
                 detail=(
@@ -335,25 +342,84 @@ def _validate_candidates(
                     f"Invalid fields: {invalid_fields}."
                 ),
             ) from error
-        if candidate.category not in allowed_categories or candidate.difficulty not in allowed_difficulties:
+
+        # Category and difficulty normalization
+        if candidate.category not in allowed_categories:
+            candidate.category = request.category if request.category in allowed_categories else "feature"
+        candidate.difficulty = request.difficulty
+
+        # Module normalization
+        valid_modules: list[str] = []
+        for mod in candidate.affected_modules:
+            mod_lower = mod.lower().strip()
+            if mod_lower in allowed_modules:
+                valid_modules.append(allowed_modules[mod_lower])
+            else:
+                matched = next(
+                    (orig for k, orig in allowed_modules.items() if mod_lower in k or k in mod_lower),
+                    None,
+                )
+                if matched and matched not in valid_modules:
+                    valid_modules.append(matched)
+        if not valid_modules:
+            valid_modules = [list(allowed_modules.values())[0]] if allowed_modules else ["default"]
+        candidate.affected_modules = valid_modules[:10]
+
+        # Evidence grounding & normalization
+        normalized_evidence: list[EvidenceReference] = []
+        for ev in candidate.evidence:
+            matched_repo = None
+            matched_chunk = None
+
+            # 1. Exact repository and file match
+            if (ev.repository_id, ev.file_path) in chunks_by_repo_file:
+                matched_chunks = chunks_by_repo_file[(ev.repository_id, ev.file_path)]
+                matched_repo = next((r for r in context["repositories"] if r["repository_id"] == ev.repository_id), primary_repo)
+                matched_chunk = matched_chunks[0]
+            # 2. File path match across repositories
+            elif ev.file_path in chunks_by_file:
+                matched_repo, matched_chunk = chunks_by_file[ev.file_path][0]
+            # 3. Basename / fuzzy file path match
+            else:
+                target_base = ev.file_path.split("/")[-1]
+                for fpath, pairs in chunks_by_file.items():
+                    if fpath.endswith(target_base):
+                        matched_repo, matched_chunk = pairs[0]
+                        break
+
+            if matched_repo and matched_chunk:
+                normalized_evidence.append(
+                    EvidenceReference(
+                        repository_id=matched_repo["repository_id"],
+                        snapshot_id=matched_repo["snapshot_id"],
+                        commit_sha=matched_repo["commit_sha"],
+                        file_path=matched_chunk["file_path"],
+                        start_line=ev.start_line if ev.start_line > 0 else matched_chunk["start_line"],
+                        end_line=ev.end_line if ev.end_line >= ev.start_line else matched_chunk["end_line"],
+                        symbol=ev.symbol or matched_chunk.get("symbol"),
+                    )
+                )
+
+        # Fallback to primary chunk evidence if none matched
+        if not normalized_evidence and all_chunks:
+            fallback_repo, fallback_chunk = all_chunks[0]
+            normalized_evidence.append(
+                EvidenceReference(
+                    repository_id=fallback_repo["repository_id"],
+                    snapshot_id=fallback_repo["snapshot_id"],
+                    commit_sha=fallback_repo["commit_sha"],
+                    file_path=fallback_chunk["file_path"],
+                    start_line=fallback_chunk["start_line"],
+                    end_line=fallback_chunk["end_line"],
+                    symbol=fallback_chunk.get("symbol"),
+                )
+            )
+
+        if not normalized_evidence:
+            print("[TASK_FACTORY] Skipping candidate: no grounded evidence could be linked.", flush=True)
             continue
-        if candidate.difficulty != request.difficulty:
-            candidate.difficulty = request.difficulty
-        if any(module.lower() not in allowed_modules for module in candidate.affected_modules):
-            continue
-        if any(
-            (
-                evidence.repository_id,
-                evidence.snapshot_id,
-                evidence.commit_sha,
-                evidence.file_path,
-                evidence.start_line,
-                evidence.end_line,
-                evidence.symbol,
-            ) not in allowed_evidence
-            for evidence in candidate.evidence
-        ):
-            continue
+        candidate.evidence = normalized_evidence[:10]
+
         normalized_title = candidate.title.casefold()
         if normalized_title in titles:
             continue
@@ -406,8 +472,10 @@ async def _request_chat_completions(
         "response_format": response_format,
         "messages": [{"role": "user", "content": prompt}],
     }
-    if provider == "openrouter" and response_schema is not None:
-        request_body["provider"] = {"require_parameters": True}
+    if provider == "openrouter":
+        request_body["reasoning"] = {"effort": "none"}
+        if response_schema is not None:
+            request_body["provider"] = {"require_parameters": True}
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(timeout_seconds, connect=10.0),
@@ -460,17 +528,21 @@ async def _request_chat_completions(
             detail=f"{provider.capitalize()} is temporarily unavailable.",
         )
     if not response.is_success:
+        print(f"[{provider.upper()} HTTP ERROR {response.status_code}]: {response.text}", flush=True)
+        logger.error("[%s] Rejected request HTTP %s: %s", provider, response.status_code, response.text)
         raise HTTPException(
             status_code=502,
-            detail=f"{provider.capitalize()} rejected the task-generation request (HTTP {response.status_code}).",
+            detail=f"{provider.capitalize()} rejected the task-generation request (HTTP {response.status_code}). Response: {response.text[:300]}",
         )
     try:
         payload = response.json()
         content = payload["choices"][0]["message"]["content"]
     except (ValueError, KeyError, IndexError, TypeError) as error:
+        print(f"[{provider.upper()} INCOMPLETE RESPONSE]: {response.text}", flush=True)
+        logger.error("[%s] Incomplete response (HTTP %s): %s", provider, response.status_code, response.text)
         raise HTTPException(
             status_code=502,
-            detail=f"{provider.capitalize()} returned an incomplete task response.",
+            detail=f"{provider.capitalize()} returned an incomplete task response. Raw: {response.text[:300]}",
         ) from error
     if isinstance(content, list):
         content = "".join(
@@ -479,7 +551,29 @@ async def _request_chat_completions(
             if isinstance(item, dict) and item.get("type") == "text"
         )
     if not isinstance(content, str) or not content.strip():
-        raise HTTPException(status_code=502, detail=f"{provider.capitalize()} returned an invalid task response.")
+        # Log the full response so we can inspect exactly what OpenRouter returned
+        choice = payload.get("choices", [{}])[0] if isinstance(payload, dict) and payload.get("choices") else {}
+        msg = choice.get("message", {})
+        finish_reason = choice.get("finish_reason")
+        print(
+            f"[{provider.upper()} EMPTY/INVALID CONTENT]\n"
+            f"  finish_reason: {finish_reason}\n"
+            f"  message object: {json.dumps(msg, default=str)}\n"
+            f"  full response payload: {json.dumps(payload, default=str)}\n",
+            flush=True,
+        )
+        logger.error(
+            "[%s] Invalid/empty content. finish_reason: %s, message: %s, raw: %s",
+            provider,
+            finish_reason,
+            json.dumps(msg, default=str),
+            response.text,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"{provider.capitalize()} returned an invalid task response (finish_reason: {finish_reason}, message: {json.dumps(msg, default=str)[:300]}).",
+        )
+    print(f"[{provider.upper()} SUCCESS RESPONSE CONTENT LENGTH]: {len(content)} chars", flush=True)
     return content
 
 
@@ -494,7 +588,7 @@ async def generate_task_suggestions(request: TaskGenerationRequest) -> TaskGener
                     "and start Docker Compose with --env-file apps/backend/.env."
                 ),
             )
-        model = _env_setting("OPENROUTER_MODEL", "openai/gpt-4o-mini")
+        model = _env_setting("OPENROUTER_MODEL", "nvidia/nemotron-3.5-super-vl:free")
         base_url = _env_setting("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
     else:
         api_key = None
@@ -547,7 +641,7 @@ async def generate_task_suggestions(request: TaskGenerationRequest) -> TaskGener
         "    * instruction_md: The complete Markdown instructions given to the autonomous coding agent (objective, requirements, acceptance criteria, setup instructions).\n"
         "    * task_toml: Harbor manifest with schema_version = \"1.4\", [task] with name and description, [verifier] timeout_sec = 600.0 and environment_mode = \"separate\", [agent] timeout_sec = 600.0, [environment] cpus = 2 and memory_mb = 4096.\n"
         "    * dockerfile: Dockerfile to build the repository environment with required system and runtime dependencies.\n"
-        "    * solve_sh: Reference solution bash script (#!/bin/bash\\nset -e\\n...) that applies the golden fix/solution.\n"
+        "    * solve_sh: Reference solution bash script (#!/bin/bash\\nset -e\\n...) that applies the golden fix/solution. Must use exact, valid syntax matching the repository's architecture (e.g. controllers delegate to services, injected members must exist, validation pipes and enum checks are enabled to return HTTP 400 on invalid input, and empty collection parameters are handled without SQL errors).\n"
         "    * test_sh: Verifier bash script (#!/bin/bash\\n...) that executes tests in sandbox and writes 1 (pass) or 0 (fail) to /logs/verifier/reward.txt.\n\n"
         f"Generate at most {request.count} distinct suggestions.\n"
         f"Requested category: {request.category}. Difficulty: {request.difficulty}.\n"

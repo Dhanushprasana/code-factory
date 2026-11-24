@@ -76,6 +76,9 @@ export class TaskEntity {
   @Column({ name: 'harbor_package_path', type: 'varchar', length: 500, nullable: true })
   harborPackagePath: string | null;
 
+  @Column({ name: 'harbor_verification', type: 'jsonb', nullable: true })
+  harborVerification: Record<string, unknown> | null;
+
   @OneToMany(() => TaskVersionEntity, (version) => version.task)
   versions: TaskVersionEntity[];
 
