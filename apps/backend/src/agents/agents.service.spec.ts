@@ -11,6 +11,7 @@ describe('AgentsService', () => {
 
   beforeEach(() => {
     agentRepo = {
+      count: jest.fn(),
       find: jest.fn(),
       findOne: jest.fn(),
       create: jest.fn((val) => ({ ...val })),
@@ -59,6 +60,48 @@ describe('AgentsService', () => {
 
   it('rejects agent creation with empty name', async () => {
     await expect(service.create({ name: '   ' })).rejects.toThrow(BadRequestException);
+  });
+
+  it('accepts a secret environment reference but never accepts a literal API key', async () => {
+    agentRepo.findOne.mockResolvedValue({
+      id: 'agent-123',
+      name: 'Gemini CLI',
+      credentialReference: 'GEMINI_API_KEY',
+      settings: {},
+      configs: [],
+    });
+
+    await expect(service.create({
+      name: 'Gemini CLI',
+      credentialReference: 'GEMINI_API_KEY',
+    })).resolves.toMatchObject({ credentialReference: 'GEMINI_API_KEY' });
+
+    await expect(service.create({
+      name: 'Unsafe Gemini',
+      credentialReference: `AIza${'A'.repeat(30)}`,
+    })).rejects.toThrow(BadRequestException);
+  });
+
+  it('rejects API keys embedded in an agent command', async () => {
+    await expect(service.create({
+      name: 'Unsafe Gemini',
+      settings: { command: ['gemini', '--api-key', `AIza${'A'.repeat(30)}`] },
+    })).rejects.toThrow(BadRequestException);
+  });
+
+  it('redacts invalid stored credential references and command arguments from API responses', async () => {
+    agentRepo.findOne.mockResolvedValue({
+      id: 'agent-123',
+      name: 'Legacy Agent',
+      credentialReference: `AIza${'A'.repeat(30)}`,
+      settings: { command: ['gemini', '--api-key', `AIza${'A'.repeat(30)}`] },
+      configs: [],
+    });
+
+    await expect(service.get('agent-123')).resolves.toMatchObject({
+      credentialReference: null,
+      settings: { command: [] },
+    });
   });
 
   it('lists all agents ordered by createdAt DESC', async () => {
@@ -112,6 +155,53 @@ describe('AgentsService', () => {
       modelName: 'gpt-4.5',
     }));
     expect(result.name).toBe('New Name');
+  });
+
+  it('seeds built-in agents with Harbor adapters and migrates legacy direct-CLI profiles', async () => {
+    const legacyGemini = {
+      id: 'gemini-agent',
+      name: 'Gemini CLI',
+      adapterType: 'direct-cli',
+      provider: 'Google AI Studio',
+      modelName: 'gemini-3.1-flash-lite',
+      status: 'ready',
+      settings: { command: ['npx', 'gemini'] },
+    };
+    agentRepo.findOne.mockImplementation(async ({ where }) => (
+      where.name === 'Gemini CLI' ? legacyGemini : null
+    ));
+    agentRepo.find.mockResolvedValue([]);
+    const updateAgent = jest.spyOn(service, 'update').mockResolvedValue({} as AgentEntity);
+    const createAgent = jest.spyOn(service, 'create').mockResolvedValue({} as AgentEntity);
+
+    await service.seedDefaults();
+
+    expect(updateAgent).toHaveBeenCalledWith('gemini-agent', expect.objectContaining({
+      adapterType: 'harbor',
+      modelName: 'gemini-3.1-flash-lite',
+      credentialReference: 'GEMINI_API_KEY',
+      settings: expect.objectContaining({ harborAgent: 'gemini-cli' }),
+    }));
+    expect(createAgent).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'Antigravity',
+      adapterType: 'harbor',
+      credentialReference: 'GEMINI_API_KEY',
+      settings: expect.objectContaining({ harborAgent: 'antigravity-cli' }),
+    }));
+    expect(createAgent).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'Claude Code',
+      adapterType: 'harbor',
+      status: 'offline',
+      credentialReference: 'ANTHROPIC_API_KEY',
+      settings: expect.objectContaining({ harborAgent: 'claude-code' }),
+    }));
+    expect(createAgent).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'OpenAI Codex',
+      adapterType: 'harbor',
+      status: 'offline',
+      credentialReference: 'OPENAI_API_KEY',
+      settings: expect.objectContaining({ harborAgent: 'codex' }),
+    }));
   });
 
   it('deletes an agent', async () => {

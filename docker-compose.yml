@@ -72,11 +72,17 @@ services:
     environment:
       VALIDATION_RUNNER_TOKEN: ${VALIDATION_RUNNER_TOKEN:-local-validation-runner-token}
       VALIDATION_ALLOW_NETWORK: ${REFERENCE_VALIDATION_ALLOW_NETWORK:-true}
+      AGENT_EXECUTION_ALLOW_NETWORK: ${AGENT_EXECUTION_ALLOW_NETWORK:-false}
       VALIDATION_ARTIFACT_ROOT: /workspace/storage
       VALIDATION_IMAGE: code-factory-validation:local
       VALIDATION_EGRESS_NETWORK: forgebench-validation-egress
       VALIDATION_COMMAND_TIMEOUT_SECONDS: ${REFERENCE_VALIDATION_COMMAND_TIMEOUT_SECONDS:-600}
       VALIDATION_MAX_WORKSPACE_BYTES: ${REFERENCE_VALIDATION_MAX_WORKSPACE_BYTES:-536870912}
+      AGENT_SECRET_ENV_ALLOWLIST: GEMINI_API_KEY,GOOGLE_API_KEY,OPENAI_API_KEY,ANTHROPIC_API_KEY
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     volumes:
       - artifacts:/workspace/storage:ro
       - /var/run/docker.sock:/var/run/docker.sock
@@ -90,6 +96,40 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
+
+  harbor-runner:
+    image: code-factory-harbor-runner:local
+    build:
+      context: .
+      dockerfile: apps/validation-runner/Dockerfile.harbor
+    container_name: forgebench-harbor-runner
+    restart: unless-stopped
+    environment:
+      VALIDATION_RUNNER_TOKEN: ${VALIDATION_RUNNER_TOKEN:-local-validation-runner-token}
+      AGENT_EXECUTION_ALLOW_NETWORK: ${AGENT_EXECUTION_ALLOW_NETWORK:-false}
+      VALIDATION_ARTIFACT_ROOT: /workspace/storage
+      VALIDATION_IMAGE: code-factory-validation:local
+      AGENT_SECRET_ENV_ALLOWLIST: GEMINI_API_KEY,GOOGLE_API_KEY,OPENAI_API_KEY,ANTHROPIC_API_KEY
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - artifacts:/workspace/storage:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      validation-runner:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8011/health', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 45s
 
   ollama:
     image: ollama/ollama:latest
@@ -127,14 +167,18 @@ services:
       AI_SERVICE_URL: http://ai-service:8000
       ARTIFACT_STORAGE_PATH: storage
       VALIDATION_RUNNER_URL: http://validation-runner:8010
+      HARBOR_RUNNER_URL: http://harbor-runner:8011
       VALIDATION_RUNNER_TOKEN: ${VALIDATION_RUNNER_TOKEN:-local-validation-runner-token}
       REFERENCE_VALIDATION_ALLOW_NETWORK: ${REFERENCE_VALIDATION_ALLOW_NETWORK:-true}
+      AGENT_EXECUTION_ALLOW_NETWORK: ${AGENT_EXECUTION_ALLOW_NETWORK:-false}
     depends_on:
       postgres:
         condition: service_healthy
       ai-service:
         condition: service_healthy
       validation-runner:
+        condition: service_healthy
+      harbor-runner:
         condition: service_healthy
     ports:
       - "127.0.0.1:4000:4000"

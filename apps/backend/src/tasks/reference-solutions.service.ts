@@ -234,9 +234,6 @@ export class ReferenceSolutionsService {
       reference.validation = {
         ...reference.validation,
         patch_preflight: 'passed',
-        build: 'not_run',
-        tests: 'not_run',
-        execution_mode: 'not_run',
         workspace: {
           ...workspaceData,
           status: 'applied',
@@ -1129,8 +1126,14 @@ export class ReferenceSolutionsService {
         const packageJson = JSON.parse(fs.readFileSync(manifest, 'utf8')) as {
           packageManager?: string;
           scripts?: Record<string, unknown>;
+          dependencies?: Record<string, unknown>;
+          devDependencies?: Record<string, unknown>;
         };
         const scripts = packageJson.scripts ?? {};
+        const dependencies = {
+          ...(packageJson.dependencies ?? {}),
+          ...(packageJson.devDependencies ?? {}),
+        };
         const declaredPackageManager = typeof packageJson.packageManager === 'string'
           ? packageJson.packageManager.split('@')[0]
           : '';
@@ -1185,6 +1188,26 @@ export class ReferenceSolutionsService {
             : [packageManager, ...(packageManager === 'pnpm'
               ? ['--dir', prefix || '.', 'test']
               : ['--cwd', prefix || '.', 'test'])]);
+        } else if (typeof scripts['test:unit'] === 'string') {
+          const testCommand = `${packageManager}${prefix ? ` --prefix ${prefix}` : ''} run test:unit`;
+          tests.push(testCommand);
+          testArgs.push(packageManager === 'npm'
+            ? ['npm', ...prefixArgs, 'run', 'test:unit']
+            : [packageManager, ...(packageManager === 'pnpm'
+              ? ['--dir', prefix || '.', 'run', 'test:unit']
+              : ['--cwd', prefix || '.', 'run', 'test:unit'])]);
+        } else if (typeof dependencies.vitest === 'string'
+          || fs.existsSync(path.join(packageDirectory, 'vitest.config.ts'))
+          || fs.existsSync(path.join(packageDirectory, 'vitest.config.js'))) {
+          const testCommand = `${packageManager}${prefix ? ` --prefix ${prefix}` : ''} exec vitest -- run`;
+          tests.push(testCommand);
+          testArgs.push(['npm', ...prefixArgs, 'exec', 'vitest', '--', 'run']);
+        } else if (typeof dependencies.jest === 'string'
+          || fs.existsSync(path.join(packageDirectory, 'jest.config.ts'))
+          || fs.existsSync(path.join(packageDirectory, 'jest.config.js'))) {
+          const testCommand = `${packageManager}${prefix ? ` --prefix ${prefix}` : ''} exec jest -- --runInBand`;
+          tests.push(testCommand);
+          testArgs.push(['npm', ...prefixArgs, 'exec', 'jest', '--', '--runInBand']);
         }
         continue;
       }

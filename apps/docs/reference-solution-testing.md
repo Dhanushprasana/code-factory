@@ -35,6 +35,15 @@ Detected project types:
 
 Nested `backend/package.json` and `frontend/package.json` manifests are detected independently. npm commands use `--prefix` for the nested package directory, while pnpm and Yarn use `--dir` or `--cwd`.
 
+Frontend testing is detected only when there is executable evidence:
+
+- `scripts.test` runs through the project package manager.
+- `scripts.test:unit` runs as a unit-test phase.
+- Vitest dependencies/configuration run `npm/pnpm/yarn exec vitest -- run`.
+- Jest dependencies/configuration run Jest once with `--runInBand`.
+
+No frontend test command is invented when the package has neither a test script nor a recognized test framework. This prevents a successful build from being mistaken for test success.
+
 Existing applied workspaces are refreshed with newly detected commands before a new validation run. No patch reapplication is needed after upgrading ForgeBench.
 
 ## Isolated execution environment

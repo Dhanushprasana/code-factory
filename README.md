@@ -1,6 +1,6 @@
 # ForgeBench
 
-ForgeBench is a local prototype for repository-grounded coding benchmarks. Implemented workflows cover PostgreSQL-backed projects, GitHub repository access, immutable commit snapshots, static repository analysis, and source-grounded AI task generation/review.
+ForgeBench is a local prototype for repository-grounded coding benchmarks. Implemented workflows cover PostgreSQL-backed projects, GitHub repository access, immutable commit snapshots, static repository analysis, source-grounded AI task/reference generation and review, Harbor-backed agent execution, and isolated evaluation of configured commands.
 
 ## Applications
 
@@ -22,7 +22,7 @@ ForgeBench is a local prototype for repository-grounded coding benchmarks. Imple
 - Retrieve bounded source context from selected analyzed baselines, choose OpenRouter or Ollama for task suggestions, review/edit them, and save versioned task drafts.
 - Generate provider-consistent reference plans, repository-specific patches/tests, and review version history. Apply patches to a separate copy of the pinned snapshot, download it, then record manually run build/test results before approval.
 
-The analyzer inspects repository files and manifests without running repository code, installing dependencies, or executing tests. Task and reference generation use bounded keyword/structure/static-graph retrieval (not vector search). OpenRouter sends selected excerpts to its hosted model and requires an API key; Ollama can process the excerpts on a configured local model endpoint. Reference builds/tests are not run in ForgeBench; coding-agent execution and benchmark evaluation are not implemented end-to-end.
+The analyzer inspects repository files and manifests without running repository code, installing dependencies, or executing tests. Task and reference generation use bounded keyword/structure/static-graph retrieval (not vector search). OpenRouter sends selected excerpts to its hosted model and requires an API key; Ollama can process the excerpts on a configured local model endpoint. Reference builds/tests are not executed during reference approval; reviewers run them manually and record results. Agent execution and evaluation are implemented, but results depend on provider availability and configured public/hidden tests. See [Agent Execution and Evaluation](apps/docs/agent-execution-evaluation.md) and [Project Improvements and Showstoppers](apps/docs/project-improvements-and-showstoppers.md) for the actual scope, evidence, and current blockers.
 
 Choose the provider per generation in Task Generator. Configure OpenRouter or Ollama model settings in the ignored `apps/backend/.env`; OpenRouter needs `OPENROUTER_API_KEY`, while Ollama needs a running endpoint and pulled model. Ollama can run in the optional Docker Compose `ollama` profile. The app and repository analysis run without either provider being configured, and the task page returns a clear error if the selected provider is unavailable.
 

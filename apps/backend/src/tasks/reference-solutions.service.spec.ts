@@ -482,6 +482,38 @@ describe('ReferenceSolutionsService review gates', () => {
     }
   });
 
+  it('discovers Vitest and test:unit frontend commands', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reference-frontend-tests-'));
+    try {
+      const frontend = path.join(root, 'frontend');
+      fs.mkdirSync(frontend, { recursive: true });
+      fs.writeFileSync(path.join(frontend, 'package.json'), JSON.stringify({
+        scripts: { build: 'vite build' },
+        devDependencies: { vitest: '^2.0.0' },
+      }));
+      fs.writeFileSync(path.join(frontend, 'vitest.config.ts'), 'export default {};\n');
+
+      const service = Object.create(ReferenceSolutionsService.prototype) as ReferenceSolutionsService;
+      const commands = (service as any).suggestBuildAndTestCommands(root) as {
+        testArgs: string[][];
+        tests: string[];
+      };
+
+      expect(commands.tests).toEqual(['npm --prefix frontend exec vitest -- run']);
+      expect(commands.testArgs).toEqual([[
+        'npm',
+        '--prefix',
+        'frontend',
+        'exec',
+        'vitest',
+        '--',
+        'run',
+      ]]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('applies valid patches and generated tests to a copy of the pinned snapshot', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reference-apply-'));
     try {

@@ -1,6 +1,6 @@
 # ForgeBench backend guide
 
-This guide describes the backend structure and runnable workflows implemented at the current project stage: project and repository setup, GitHub access, pinned repository snapshots, static repository analysis, AI-assisted task generation, and reference-solution generation and review.
+This guide describes the backend structure and workflows implemented at the current project stage: project and repository setup, GitHub access, pinned repository snapshots, static repository analysis, AI-assisted task generation, reference-solution generation and review, and two-agent benchmarking.
 
 ## Backend modules
 
@@ -13,10 +13,12 @@ The NestJS application is composed from domain modules. Controllers own their HT
 | `RepositoriesModule` | Associate repositories with projects, list associations, remove links, and clone snapshots | `repositories/entities/` |
 | `AnalysisModule` | Queue snapshot analysis, persist report history, and expose summaries and graph data | `analysis/entities/repository-analysis.entity.ts` |
 | `TasksModule` | Retrieve context from selected analyzed baselines, generate AI task suggestions and provider-consistent reference plans/patches/tests, apply patches to isolated review copies, and save versioned task/reference records | `tasks/entities/` |
+| `AgentsModule` | Register and configure coding agents and versioned agent settings | `agents/entities/` |
+| `AgentsBenchmarkModule` | Queue two independent agent runs through Direct CLI or Harbor, collect patches, run isolated evaluations, and persist scores | `executions/entities/` |
 | `GitHubModule` | Public repository discovery and allowlisted GitHub App access; list branches and commits | No local entity; GitHub remains the source of repository metadata |
-| `WorkflowModule` | Package, agent, and evaluation API placeholders | No TypeORM entities; prototype state is stored in the artifact JSON file |
+| `WorkflowModule` | Legacy package workflow endpoints | Prototype state is stored in the artifact JSON file |
 
-`TasksModule` owns task generation and reference-solution generation/review. `WorkflowModule` retains only package, agent, and evaluation placeholders; those are not presented as working features in the frontend.
+`TasksModule` owns task generation and reference-solution generation/review. Agent and benchmark records are persisted by `AgentsModule` and `AgentsBenchmarkModule`; the legacy workflow controller is not the benchmark execution API.
 
 ### Source layout
 
@@ -59,6 +61,14 @@ apps/backend/src/
       task.entity.ts
       task-version.entity.ts
       reference-solution.entity.ts
+  agents/
+    agents.controller.ts
+    agents.service.ts
+    entities/
+  executions/
+    agents-benchmark.controller.ts
+    agent-benchmark.service.ts
+    entities/
   github/
     github.controller.ts
     github.module.ts
@@ -73,7 +83,7 @@ apps/backend/src/
   app.service.ts                    # Prototype workflow state used by WorkflowModule
 ```
 
-Every feature module has an `entities/` directory. Only the modules that currently persist relational data contain TypeORM entity classes; GitHub metadata is fetched from GitHub and workflow placeholders use JSON state, so their folders are reserved for future persistence models.
+Agent assignments, executions, submissions, and evaluations use TypeORM entities. GitHub metadata is fetched from GitHub, while the legacy workflow state remains JSON-backed.
 
 ## Entity model
 
@@ -99,7 +109,7 @@ ProjectEntity 1 ─── * TaskGenerationEntity 1 ─── * TaskEntity 1 ─�
 - **RepositorySnapshotEntity** (`repository_snapshots`) records a checkout attempt/result for a repository and exact commit SHA. The repository/commit pair is unique; the local checkout path is not returned by the API.
 - **RepositoryAnalysisEntity** (`repository_analyses`) records queued, running, completed, or failed analysis for one ready snapshot. It stores the source-grounded summary and report as JSONB, analyzer version, warnings, and any failure message.
 - **TaskGenerationEntity** (`task_generation_runs`) records task-generation inputs, status/error, AI provider/model/prompt version, candidate drafts, and the context manifest used for the run.
-- **TaskEntity** (`tasks`) stores a saved draft, its structured requirements/acceptance criteria, baseline and source-evidence manifests, and its current version number. Tasks remain editable drafts; agent execution and evaluation are not implemented.
+- **TaskEntity** (`tasks`) stores a saved draft, its structured requirements/acceptance criteria, baseline and source-evidence manifests, and its current version number. Tasks remain editable drafts until the approved reference is selected for benchmarking.
 - **TaskVersionEntity** (`task_versions`) stores an immutable JSONB snapshot for each saved or edited task version.
 
 Deleting a project removes its project links through the database foreign key. Removing a repository from a project removes only that association. Repository records and snapshots are retained unless their owning repository is deleted.
@@ -219,6 +229,10 @@ For generating file-by-file implementation plans, repository-specific code patch
 
 For the investigation of a malformed generated patch rejected by `git apply --check`, including the exact hunk-count mismatch and recovery steps, see [Reference Patch Application Failure Report](./reference-patch-application-failure-report.md).
 
+For the two-agent execution, isolated submission collection, public/hidden test evaluation, Gemini CLI credentials, score model, and current Harbor integration scope, see [Agent Execution and Evaluation](./agent-execution-evaluation.md).
+
+For a chronological status of the project, current workflow, active showstoppers, test evidence, and recommended improvements, see [Project Improvements and Showstoppers](./project-improvements-and-showstoppers.md).
+
 1. The frontend loads `GET /api/v1/projects/:id/task-context`. For each repository attached to the project, the backend finds the latest completed analysis for that association's currently selected commit and verifies that its snapshot is still ready. The API returns analysis IDs, roles, module names, and readiness, but never returns local checkout paths.
 2. Select one or more ready component analyses, enter an optional task idea, category, difficulty, constraints, and suggestion count, choose **OpenRouter** or **Ollama**, then request suggestions. The backend checks that each selected analysis belongs to the project and matches the project's pinned commit before creating a generation-history row.
 3. The backend resolves verified checkout paths from the ready snapshot records and sends the analysis summary/report and pinned metadata to the Python service. The Python service only accepts paths under `REPOSITORY_SCAN_ROOT`.
@@ -244,7 +258,9 @@ All paths below are relative to `/api/v1`.
 | `RepositoriesController` | `GET /repositories`, `GET /projects/:id/repositories`, `POST /projects/:id/repositories`, `DELETE /projects/:id/repositories/:repositoryId`, `POST /projects/:id/repositories/:repositoryId/snapshots` |
 | `AnalysisController` | `POST /repositories/:id/analyze`, `GET /repositories/:id/analyses`, `GET /analyses/:id`, `GET /analyses/:id/summary`, `GET /analyses/:id/graph` |
 | `TasksController` | `GET /projects/:id/task-context`, `GET /projects/:id/task-generations`, `POST /projects/:id/tasks/suggest` (body includes `provider: "openrouter" \| "ollama"`), `GET /projects/:id/tasks`, `POST /projects/:id/tasks`, `GET /tasks?projectId=...`, `GET /tasks/:id`, `PATCH /tasks/:id`, `GET /tasks/:id/versions`, `POST /tasks/:id/references/generate`, `GET /tasks/:id/references`, `GET /references/:id`, `POST /references/:id/validation`, `PATCH /references/:id/review` |
-| `WorkflowController` | Package, agent, and evaluation placeholder endpoints; see the scope note above |
+| `WorkflowController` | Legacy package workflow endpoints |
+| `AgentsController` | `GET /agents`, `POST /agents`, `PATCH /agents/:id`, `POST /agents/seed` |
+| `AgentsBenchmarkController` | `POST /tasks/:id/agents/execute`, `GET /tasks/:id/benchmark`, `GET /executions/:id`, `GET /evaluations/:id`, `POST /references/:id/hidden-tests` |
 
 ## Technology
 

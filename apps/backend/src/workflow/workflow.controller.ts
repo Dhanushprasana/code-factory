@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Controller, Get, Param, Post } from '@nestjs/common';
 import { AppService } from '../app.service';
 
 @Controller()
@@ -28,11 +28,6 @@ export class WorkflowController {
   @Post('packages/:id/export')
   exportPackage(@Param('id') id: string) {
     return this.appService.exportPackage(id);
-  }
-
-  @Post('tasks/:id/agents/execute')
-  executeAgents(@Param('id') id: string, @Body() body: any) {
-    return this.appService.executeAgents(id, body);
   }
 
   @Get('evaluations')

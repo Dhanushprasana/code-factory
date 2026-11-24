@@ -16,6 +16,7 @@ import {
   Sparkles,
   Trash2,
   X,
+  Trophy,
 } from 'lucide-react';
 
 const nav = [
@@ -23,6 +24,7 @@ const nav = [
   { to: '/projects', label: 'Projects', icon: FolderKanban },
   { to: '/tasks/new', label: 'Task generator', icon: Sparkles },
   { to: '/tasks', label: 'Task library', icon: ClipboardList },
+  { to: '/benchmarks', label: 'Benchmarks', icon: Trophy },
   { to: '/settings', label: 'Settings', icon: Settings },
   { to: '/analysis', label: 'Repository Analysis', icon: GitBranch },
 ];
@@ -278,6 +280,7 @@ function Shell() {
           <Route path="/tasks/new" element={<TaskGeneratorPage />} />
           <Route path="/tasks/:taskId" element={<TaskLibraryPage />} />
           <Route path="/tasks" element={<TaskLibraryPage />} />
+          <Route path="/benchmarks" element={<BenchmarksPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/analysis" element={<AnalysisPage />} />
           <Route path="/analysis/:analysisId" element={<AnalysisPage />} />
@@ -932,7 +935,6 @@ function AddRepositoryModal({ projectId, onClose, onAdded }: { projectId: string
     }
   };
   const addRepository = async () => {
-    setBusy(true);
     setError('');
     try {
       await request(`${apiUrl}/projects/${projectId}/repositories`, {
@@ -1064,7 +1066,7 @@ function SettingsPage() {
     try {
       const seeded = await request<Agent[]>(`${apiUrl}/agents/seed`, { method: 'POST' });
       setAgents(seeded);
-      setNotice('Default benchmark agents (Codex, Claude Code, Antigravity, Harbor) loaded successfully.');
+      setNotice('Default benchmark agents (Codex, Claude Code, Antigravity, Gemini CLI, Harbor) loaded successfully.');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Failed to seed default agents.');
     } finally {
@@ -1187,7 +1189,7 @@ function SettingsPage() {
                 className="secondary-button"
                 onClick={handleSeedDefaults}
                 disabled={seeding}
-                title="Populate recommended agent baselines (Codex, Claude Code, Antigravity, Harbor)"
+                title="Populate recommended agent baselines (Codex, Claude Code, Antigravity, Gemini CLI, Harbor)"
               >
                 <RefreshCw size={14} />
                 {seeding ? 'Seeding…' : 'Seed Defaults'}
@@ -1331,10 +1333,17 @@ function AgentModal({
   const [provider, setProvider] = useState(agent?.provider ?? 'Anthropic');
   const [adapterType, setAdapterType] = useState(agent?.adapterType ?? 'direct-cli');
   const [modelName, setModelName] = useState(agent?.modelName ?? 'claude-3-7-sonnet');
+  const [harborAgent, setHarborAgent] = useState(agent?.settings?.harborAgent ?? 'gemini-cli');
   const [status, setStatus] = useState(agent?.status ?? 'ready');
   const [description, setDescription] = useState(agent?.description ?? '');
   const [executionMode, setExecutionMode] = useState(agent?.settings?.executionMode ?? 'docker-sandbox');
   const [timeoutMinutes, setTimeoutMinutes] = useState(agent?.settings?.timeoutMinutes ?? 25);
+  const [allowNetwork, setAllowNetwork] = useState(agent?.settings?.allowNetwork ?? false);
+  const [commandJson, setCommandJson] = useState(
+    Array.isArray(agent?.settings?.command)
+      ? JSON.stringify(agent.settings.command)
+      : '[]',
+  );
   const [credentialReference, setCredentialReference] = useState(agent?.credentialReference ?? '');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -1348,6 +1357,22 @@ function AgentModal({
     setBusy(true);
     setError('');
 
+    let command: string[] = [];
+    if (commandJson.trim()) {
+      try {
+        const parsed = JSON.parse(commandJson);
+        if (!Array.isArray(parsed) || parsed.some(item => typeof item !== 'string' || !item)) {
+          setError('Agent command must be a JSON array of strings.');
+          return;
+        }
+        command = parsed as string[];
+      } catch {
+        setError('Agent command must be valid JSON, for example ["claude","--task","/workspace/TASK.md"].');
+        return;
+      }
+    }
+
+    setBusy(true);
     const payload = {
       name: name.trim(),
       provider: provider.trim(),
@@ -1360,6 +1385,9 @@ function AgentModal({
         ...(agent?.settings || {}),
         executionMode,
         timeoutMinutes: Number(timeoutMinutes) || 25,
+        allowNetwork,
+        ...(adapterType === 'harbor' ? { harborAgent } : {}),
+        ...(command.length ? { command } : {}),
       },
     };
 
@@ -1413,7 +1441,7 @@ function AgentModal({
               setName(e.target.value);
               if (error) setError('');
             }}
-            placeholder="e.g. Claude Code, Codex, Custom Runner"
+            placeholder="e.g. Gemini CLI, Claude Code, Codex"
             style={!name.trim() ? { borderColor: '#fda29b' } : undefined}
           />
         </label>
@@ -1430,6 +1458,7 @@ function AgentModal({
               <option value="Anthropic">Anthropic</option>
               <option value="OpenAI">OpenAI</option>
               <option value="Google DeepMind">Google DeepMind</option>
+              <option value="Google AI Studio">Google AI Studio</option>
               <option value="Google">Google</option>
               <option value="Self-Hosted">Self-Hosted</option>
               <option value="Custom">Custom</option>
@@ -1440,10 +1469,22 @@ function AgentModal({
             Adapter Type
             <select value={adapterType} onChange={e => setAdapterType(e.target.value)}>
               <option value="direct-cli">direct-cli (Subshell)</option>
-              <option value="harbor">harbor (Adapter Bridge)</option>
+              <option value="harbor">Harbor Framework</option>
             </select>
           </label>
         </div>
+
+        {adapterType === 'harbor' && (
+          <label>
+            Harbor Agent
+            <select value={harborAgent} onChange={e => setHarborAgent(e.target.value)}>
+              <option value="gemini-cli">Gemini CLI</option>
+              <option value="antigravity-cli">Antigravity CLI</option>
+              <option value="claude-code">Claude Code</option>
+              <option value="codex">OpenAI Codex</option>
+            </select>
+          </label>
+        )}
 
         <div className="field-grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <label style={{ margin: 0, marginTop: 12 }}>
@@ -1497,14 +1538,37 @@ function AgentModal({
           </label>
         </div>
 
+        {adapterType === 'direct-cli' && (
+          <label>
+            Agent Command (JSON argument array)
+            <input
+              value={commandJson}
+              onChange={e => setCommandJson(e.target.value)}
+              placeholder='["npx","--yes","@google/gemini-cli","--prompt","Read TASK.md and implement it","--yolo"]'
+            />
+          </label>
+        )}
+
         <label>
-          Credential / Secret Reference (Optional)
+          Credential / Secret Reference (environment variable name only)
           <input
             value={credentialReference}
             onChange={e => setCredentialReference(e.target.value)}
-            placeholder="e.g. ENV_AGENT_API_KEY (never plain secrets)"
+            placeholder="GEMINI_API_KEY (never paste the key here)"
           />
         </label>
+        <label className="checkbox-field">
+          <input
+            type="checkbox"
+            checked={allowNetwork}
+            onChange={e => setAllowNetwork(e.target.checked)}
+          />
+          Allow network access for this agent (required for hosted model APIs)
+        </label>
+        <p className="field-help">
+          The API key is resolved by the selected runner from its environment and is forwarded only to the
+          isolated agent. Set AGENT_EXECUTION_ALLOW_NETWORK=true in the root .env to enable outbound access.
+        </p>
 
         {error && <div className="form-error" role="alert">{error}</div>}
 
@@ -2259,6 +2323,210 @@ function TaskLibraryPage() {
           </>}
       </>}
     </section>}
+  </div>;
+}
+
+function BenchmarksPage() {
+  type Agent = {
+    id: string;
+    name: string;
+    provider: string;
+    modelName: string;
+    adapterType: string;
+    status: string;
+  };
+  type SavedTask = {
+    id: string;
+    title: string;
+    status: string;
+  };
+  type BenchmarkAssignment = {
+    id: string;
+    status: string;
+    referenceId: string;
+    agent: Agent;
+    executions: Array<{
+      id: string;
+      status: string;
+      adapterType: string;
+      startedAt: string | null;
+      completedAt: string | null;
+      errorMessage: string | null;
+      metadata: Record<string, any>;
+      submissions: Array<{
+        id: string;
+        status: string;
+        patchValid: boolean;
+        metadata: Record<string, any>;
+        evaluations: Array<{
+          id: string;
+          status: string;
+          totalScore: number | null;
+          metrics: Record<string, any>;
+          testResults: Array<Record<string, any>>;
+          errorMessage: string | null;
+        }>;
+      }>;
+    }>;
+  };
+  type Benchmark = {
+    taskId: string;
+    taskVersion: number;
+    assignments: BenchmarkAssignment[];
+  };
+
+  const [tasks, setTasks] = useState<SavedTask[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [taskId, setTaskId] = useState('');
+  const [agentA, setAgentA] = useState('');
+  const [agentB, setAgentB] = useState('');
+  const [benchmark, setBenchmark] = useState<Benchmark | null>(null);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    Promise.all([
+      request<SavedTask[]>(`${apiUrl}/tasks`).catch(() => []),
+      request<Agent[]>(`${apiUrl}/agents`).catch(() => []),
+    ]).then(([taskItems, agentItems]) => {
+      setTasks(taskItems);
+      setAgents(agentItems);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!taskId) {
+      setBenchmark(null);
+      return;
+    }
+    request<Benchmark>(`${apiUrl}/tasks/${taskId}/benchmark`)
+      .then(setBenchmark)
+      .catch(reason => setError(reason instanceof Error ? reason.message : 'Could not load benchmark.'));
+  }, [taskId]);
+
+  useEffect(() => {
+    if (!taskId) return;
+    if (!benchmark?.assignments?.some(assignment =>
+      assignment.executions?.some(execution =>
+        execution.status === 'queued' || execution.status === 'running'))) return;
+    const timer = window.setInterval(() => {
+      request<Benchmark>(`${apiUrl}/tasks/${taskId}/benchmark`)
+        .then(setBenchmark)
+        .catch(reason => setError(reason instanceof Error ? reason.message : 'Could not refresh benchmark.'));
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [taskId, benchmark]);
+
+  const executeAgents = async () => {
+    if (!taskId || !agentA || !agentB || agentA === agentB) {
+      setError('Select exactly two different agents.');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      await request(`${apiUrl}/tasks/${taskId}/agents/execute`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ agentIds: [agentA, agentB] }),
+      });
+      const updated = await request<Benchmark>(`${apiUrl}/tasks/${taskId}/benchmark`);
+      setBenchmark(updated);
+      setNotice('Two isolated agent executions were queued.');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not start agent benchmark.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const readyAgents = agents.filter(agent => agent.status === 'ready');
+
+  return <div className="page">
+    <PageHeader
+      eyebrow="Agent benchmarking"
+      title="Execute and compare coding agents"
+      action={<Trophy size={20} />}
+    />
+    {error && <div className="inline-notice error" role="alert">{error}</div>}
+    {notice && <div className="inline-notice" role="status">{notice}</div>}
+
+    <section className="panel benchmark-controls">
+      <div className="field-grid">
+        <label>Approved task
+          <select value={taskId} onChange={event => setTaskId(event.target.value)}>
+            <option value="">Select task</option>
+            {tasks.map(task => <option value={task.id} key={task.id}>{task.title}</option>)}
+          </select>
+        </label>
+        <label>Agent A
+          <select value={agentA} onChange={event => setAgentA(event.target.value)}>
+            <option value="">Select agent</option>
+            {readyAgents.map(agent => <option value={agent.id} key={agent.id}>{agent.name} · {agent.modelName}</option>)}
+          </select>
+        </label>
+        <label>Agent B
+          <select value={agentB} onChange={event => setAgentB(event.target.value)}>
+            <option value="">Select agent</option>
+            {readyAgents.map(agent => <option value={agent.id} key={agent.id}>{agent.name} · {agent.modelName}</option>)}
+          </select>
+        </label>
+      </div>
+      <div className="task-form-actions">
+        <button
+          className="primary-button"
+          disabled={!taskId || !agentA || !agentB || agentA === agentB || busy}
+          onClick={executeAgents}
+        >
+          {busy ? 'Queueing…' : 'Execute two agents'}
+        </button>
+      </div>
+    </section>
+
+    {!benchmark?.assignments?.length && <div className="empty-state compact">Select a task and execute two configured agents to compare submissions.</div>}
+
+    {benchmark?.assignments?.map(assignment => {
+      const execution = assignment.executions?.[0];
+      const submission = execution?.submissions?.[0];
+      const evaluation = submission?.evaluations?.[0];
+      return <section className="panel benchmark-agent-card" key={assignment.id}>
+        <div className="panel-head">
+          <div>
+            <span className="eyebrow">{assignment.agent.provider} · {assignment.agent.adapterType}</span>
+            <h2>{assignment.agent.name}</h2>
+          </div>
+          <span className={`status ${execution?.status === 'submitted' && evaluation?.status === 'completed' ? 'green' : execution?.status === 'failed' || evaluation?.status === 'failed' ? 'amber' : 'gray'}`}>
+            {execution?.status ?? assignment.status}
+          </span>
+        </div>
+        <div className="benchmark-score-grid">
+          <div><span>Total score</span><strong>{evaluation?.totalScore ?? '—'}</strong><small>/ 100</small></div>
+          <div><span>Patch validity</span><strong>{evaluation?.metrics?.patchValidity ?? '—'}</strong><small>/ 10</small></div>
+          <div><span>Build</span><strong>{evaluation?.metrics?.buildTypeCheck ?? '—'}</strong><small>/ 10</small></div>
+          <div><span>Public tests</span><strong>{evaluation?.metrics?.publicRegressionTests ?? '—'}</strong><small>/ 20</small></div>
+          <div><span>Hidden tests</span><strong>{evaluation?.metrics?.hiddenTestCorrectness ?? '—'}</strong><small>/ 60</small></div>
+        </div>
+        {submission && <p className="form-hint">Submission: {submission.status} · patch {submission.patchValid ? 'valid' : 'invalid'}</p>}
+        {execution?.errorMessage && <div className="inline-notice error" role="alert">{execution.errorMessage}</div>}
+        {evaluation?.errorMessage && <div className="inline-notice error" role="alert">{evaluation.errorMessage}</div>}
+        {evaluation?.testResults?.length > 0 && <details className="benchmark-evidence">
+          <summary>Evaluation evidence</summary>
+          {evaluation.testResults.map((repository, index) => <div className="benchmark-repository" key={`${repository.repository_id}-${index}`}>
+            <h3>{String(repository.repository_id)} · {String(repository.status)}</h3>
+            {(['setup', 'build', 'tests'] as const).map(phase => <div key={phase}>
+              <h4>{phase}</h4>
+              {(repository[phase] as Array<Record<string, any>> ?? []).map((command, commandIndex) => <div className="benchmark-command" key={`${phase}-${commandIndex}`}>
+                <code>{(command.command ?? []).join(' ')}</code>
+                <span className={`status ${command.status === 'passed' ? 'green' : command.status === 'failed' ? 'amber' : 'gray'}`}>{command.status}</span>
+                <small>exit {command.exit_code ?? '—'} · {command.duration_ms ?? 0} ms</small>
+              </div>)}
+            </div>)}
+          </div>)}
+        </details>}
+      </section>;
+    })}
   </div>;
 }
 
