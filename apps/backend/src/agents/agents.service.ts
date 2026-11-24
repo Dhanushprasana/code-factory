@@ -54,10 +54,27 @@ export class AgentsService {
     }
 
     try {
-      return decryptCredential(agent.encryptedApiKey, agent.apiKeyIv, agent.apiKeyTag);
+      const raw = decryptCredential(agent.encryptedApiKey, agent.apiKeyIv, agent.apiKeyTag);
+      return this.normalizeApiKey(raw);
     } catch {
       return null;
     }
+  }
+
+  private normalizeApiKey(raw: string): string {
+    let key = raw.trim();
+    const envMatch = key.match(/^[A-Z0-9_]+=\s*(.+)$/s);
+    if (envMatch) {
+      key = envMatch[1].trim();
+    }
+    key = key.replace(/^Bearer\s+/i, '').trim();
+    if (
+      (key.startsWith('"') && key.endsWith('"')) ||
+      (key.startsWith("'") && key.endsWith("'"))
+    ) {
+      key = key.slice(1, -1).trim();
+    }
+    return key;
   }
 
   async create(input: CreateAgentDto): Promise<AgentEntity> {
@@ -72,11 +89,14 @@ export class AgentsService {
     let apiKeyMasked: string | null = null;
 
     if (input.apiKey && input.apiKey.trim()) {
-      const encrypted = encryptCredential(input.apiKey.trim());
-      encryptedApiKey = encrypted.encrypted;
-      apiKeyIv = encrypted.iv;
-      apiKeyTag = encrypted.tag;
-      apiKeyMasked = encrypted.masked;
+      const normalized = this.normalizeApiKey(input.apiKey);
+      if (normalized) {
+        const encrypted = encryptCredential(normalized);
+        encryptedApiKey = encrypted.encrypted;
+        apiKeyIv = encrypted.iv;
+        apiKeyTag = encrypted.tag;
+        apiKeyMasked = encrypted.masked;
+      }
     }
 
     const agent = this.agentRepo.create({

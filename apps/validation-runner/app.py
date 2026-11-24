@@ -585,6 +585,14 @@ def evaluate_harbor_task(
 
     # Set up credentials in environment for Harbor execution
     eval_env = os.environ.copy()
+    raw_api_key = (request.api_key or "").strip()
+    raw_api_key = re.sub(r"^[A-Z0-9_]+=\s*", "", raw_api_key)
+    raw_api_key = re.sub(r"^Bearer\s+", "", raw_api_key, flags=re.IGNORECASE).strip()
+    if (raw_api_key.startswith('"') and raw_api_key.endswith('"')) or (
+        raw_api_key.startswith("'") and raw_api_key.endswith("'")
+    ):
+        raw_api_key = raw_api_key[1:-1].strip()
+    api_key = raw_api_key
     harness = (request.harbor_harness or "aider").lower()
 
     # Supported Harbor agents from `harbor agent list`
@@ -614,7 +622,7 @@ def evaluate_harbor_task(
     skip_model_parsing = False
 
     if harness in ("anthropic", "claude") or "claude" in request.model_name.lower():
-        eval_env["ANTHROPIC_API_KEY"] = request.api_key
+        eval_env["ANTHROPIC_API_KEY"] = api_key
         model_api_key_name = "ANTHROPIC_API_KEY"
         clean_model = request.model_name.removeprefix("anthropic/")
         if agent_name == "aider":
@@ -622,7 +630,7 @@ def evaluate_harbor_task(
             model_api_format = "anthropic_messages"
             skip_model_parsing = True
     elif harness in ("openai", "gpt") or "gpt" in request.model_name.lower():
-        eval_env["OPENAI_API_KEY"] = request.api_key
+        eval_env["OPENAI_API_KEY"] = api_key
         model_api_key_name = "OPENAI_API_KEY"
         clean_model = request.model_name.removeprefix("openai/")
         if agent_name == "aider":
@@ -630,11 +638,11 @@ def evaluate_harbor_task(
             model_api_format = "openai_chat_completions"
             skip_model_parsing = True
     elif harness in ("gemini", "google") or "gemini" in request.model_name.lower():
-        eval_env["GEMINI_API_KEY"] = request.api_key
+        eval_env["GEMINI_API_KEY"] = api_key
         model_api_key_name = "GEMINI_API_KEY"
         clean_model = request.model_name.removeprefix("gemini/")
     else:
-        eval_env["OPENROUTER_API_KEY"] = request.api_key
+        eval_env["OPENROUTER_API_KEY"] = api_key
         base_url = None
         model_api_key_name = "OPENROUTER_API_KEY"
         model_api_format = None
