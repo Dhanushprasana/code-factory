@@ -78,7 +78,7 @@ services:
       VALIDATION_COMMAND_TIMEOUT_SECONDS: ${REFERENCE_VALIDATION_COMMAND_TIMEOUT_SECONDS:-600}
       VALIDATION_MAX_WORKSPACE_BYTES: ${REFERENCE_VALIDATION_MAX_WORKSPACE_BYTES:-536870912}
     volumes:
-      - artifacts:/workspace/storage:ro
+      - artifacts:/workspace/storage
       - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
       test:

@@ -7,4 +7,6 @@ export class CreateAgentDto {
   modelName?: string;
   settings?: Record<string, any>;
   credentialReference?: string | null;
+  apiKey?: string;
+  harborHarness?: string;
 }

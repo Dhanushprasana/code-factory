@@ -1,8 +1,11 @@
 import hmac
 import io
+import json
 import logging
 import os
 import re
+import shutil
+import subprocess
 import tarfile
 import time
 from datetime import datetime, timezone
@@ -432,4 +435,166 @@ def execute(request: ExecutionRequest, authorization: str | None = Header(defaul
         "execution_mode": "automatic_container",
         "network_policy": "dependency setup only" if allow_network else "disabled",
         "repositories": repositories,
+    }
+
+
+class HarborEvaluationRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    evaluation_id: str
+    task_id: str
+    package_path: str
+    model_name: str
+    harbor_harness: str = "openrouter"
+    api_key: str
+    timeout_seconds: int = 600
+    harbor_files: dict[str, str] | None = None
+
+
+@app.post("/harbor/evaluate")
+def evaluate_harbor_task(
+    request: HarborEvaluationRequest,
+    authorization: str | None = Header(default=None),
+):
+    _authorize(authorization)
+    start_time = time.time()
+
+    package_dir = ARTIFACT_ROOT / request.package_path
+    if not package_dir.exists():
+        package_dir.mkdir(parents=True, exist_ok=True)
+
+    # If package directory is empty or missing files, populate from harbor_files
+    if request.harbor_files:
+        h = request.harbor_files
+        if h.get("instruction_md"):
+            (package_dir / "instruction.md").write_text(h["instruction_md"], encoding="utf-8")
+        if h.get("task_toml"):
+            (package_dir / "task.toml").write_text(h["task_toml"], encoding="utf-8")
+        if h.get("dockerfile"):
+            env_dir = package_dir / "environment"
+            env_dir.mkdir(exist_ok=True)
+            (env_dir / "Dockerfile").write_text(h["dockerfile"], encoding="utf-8")
+        if h.get("solve_sh"):
+            sol_dir = package_dir / "solution"
+            sol_dir.mkdir(exist_ok=True)
+            (sol_dir / "solve.sh").write_text(h["solve_sh"], encoding="utf-8")
+        if h.get("test_sh"):
+            test_dir = package_dir / "tests"
+            test_dir.mkdir(exist_ok=True)
+            (test_dir / "test.sh").write_text(h["test_sh"], encoding="utf-8")
+
+    # Set up credentials in environment for Harbor execution
+    eval_env = os.environ.copy()
+    harness = (request.harbor_harness or "openrouter").lower()
+
+    if harness == "anthropic" or "claude" in request.model_name.lower():
+        eval_env["ANTHROPIC_API_KEY"] = request.api_key
+    elif harness == "openai" or "gpt" in request.model_name.lower():
+        eval_env["OPENAI_API_KEY"] = request.api_key
+    elif harness == "gemini" or "google" in request.model_name.lower():
+        eval_env["GEMINI_API_KEY"] = request.api_key
+    else:
+        eval_env["OPENROUTER_API_KEY"] = request.api_key
+
+    eval_env["HARBOR_TASK_DIR"] = str(package_dir)
+    eval_env["HARBOR_MODEL"] = request.model_name
+
+    logger.info(
+        "Starting Harbor evaluation for task %s with model %s (harness: %s)",
+        request.task_id,
+        request.model_name,
+        harness,
+    )
+
+    trajectory_logs = []
+    test_output = ""
+    reward = 0.0
+    status = "failed"
+    error_message = None
+
+    # Check if harbor CLI or python module is installed
+    harbor_bin = shutil.which("harbor")
+    cmd = []
+    if harbor_bin:
+        cmd = [
+            harbor_bin,
+            "run",
+            "--path", str(package_dir),
+            "--model", request.model_name,
+        ]
+    else:
+        # Fallback to python -m harbor if installed in venv
+        cmd = [
+            "python3",
+            "-m", "harbor",
+            "run",
+            "--path", str(package_dir),
+            "--model", request.model_name,
+        ]
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(package_dir),
+            env=eval_env,
+            capture_output=True,
+            text=True,
+            timeout=request.timeout_seconds,
+        )
+
+        stdout = proc.stdout or ""
+        stderr = proc.stderr or ""
+        trajectory_logs.append(stdout)
+        if stderr:
+            trajectory_logs.append(f"\n[stderr]\n{stderr}")
+
+        # Check reward from verifier log file or harbor output
+        reward_file = package_dir / "logs" / "verifier" / "reward.txt"
+        alt_reward_file = ARTIFACT_ROOT / "logs" / "verifier" / "reward.txt"
+        if reward_file.exists():
+            try:
+                reward = float(reward_file.read_text(encoding="utf-8").strip())
+            except Exception:
+                pass
+        elif alt_reward_file.exists():
+            try:
+                reward = float(alt_reward_file.read_text(encoding="utf-8").strip())
+            except Exception:
+                pass
+        elif proc.returncode == 0:
+            reward = 1.0
+
+        status = "passed" if reward >= 1.0 else "failed"
+
+    except subprocess.TimeoutExpired:
+        status = "failed"
+        error_message = f"Harbor evaluation timed out after {request.timeout_seconds} seconds."
+        trajectory_logs.append(f"\n[error] {error_message}")
+    except FileNotFoundError:
+        # If harbor is not yet installed in the container, provide clear diagnostic
+        status = "error"
+        error_message = "Harbor binary was not found. Please ensure 'pip install harbor' has finished inside the validation-runner container."
+        trajectory_logs.append(f"\n[error] {error_message}")
+    except Exception as e:
+        status = "error"
+        error_message = f"Harbor execution error: {str(e)}"
+        trajectory_logs.append(f"\n[error] {error_message}")
+
+    duration_ms = int((time.time() - start_time) * 1000)
+
+    return {
+        "evaluation_id": request.evaluation_id,
+        "task_id": request.task_id,
+        "status": status,
+        "reward": reward,
+        "score": reward,
+        "duration_ms": duration_ms,
+        "trajectory_logs": "\n".join(trajectory_logs),
+        "test_output": test_output,
+        "metrics": {
+            "model": request.model_name,
+            "harness": harness,
+            "timeout_seconds": request.timeout_seconds,
+        },
+        "error_message": error_message,
     }

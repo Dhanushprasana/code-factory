@@ -5,6 +5,7 @@ import { AgentEntity } from './entities/agent.entity';
 import { AgentConfigEntity } from './entities/agent-config.entity';
 import { CreateAgentDto } from './dto/create-agent.dto';
 import { UpdateAgentDto } from './dto/update-agent.dto';
+import { decryptCredential, encryptCredential } from '../common/crypto.util';
 
 @Injectable()
 export class AgentsService {
@@ -15,11 +16,17 @@ export class AgentsService {
     private readonly configRepo: Repository<AgentConfigEntity>,
   ) {}
 
+  private mapAgentResponse(agent: AgentEntity): AgentEntity {
+    agent.hasApiKey = Boolean(agent.apiKeyMasked);
+    return agent;
+  }
+
   async list(): Promise<AgentEntity[]> {
-    return this.agentRepo.find({
+    const list = await this.agentRepo.find({
       relations: ['configs'],
       order: { createdAt: 'DESC' },
     });
+    return list.map(a => this.mapAgentResponse(a));
   }
 
   async get(id: string): Promise<AgentEntity> {
@@ -30,13 +37,46 @@ export class AgentsService {
     if (!agent) {
       throw new NotFoundException(`Agent with id "${id}" was not found.`);
     }
-    return agent;
+    return this.mapAgentResponse(agent);
+  }
+
+  async getDecryptedApiKey(id: string): Promise<string | null> {
+    const agent = typeof this.agentRepo.createQueryBuilder === 'function'
+      ? await this.agentRepo
+          .createQueryBuilder('agent')
+          .addSelect(['agent.encryptedApiKey', 'agent.apiKeyIv', 'agent.apiKeyTag'])
+          .where('agent.id = :id', { id })
+          .getOne()
+      : await this.agentRepo.findOne({ where: { id } });
+
+    if (!agent || !agent.encryptedApiKey || !agent.apiKeyIv || !agent.apiKeyTag) {
+      return null;
+    }
+
+    try {
+      return decryptCredential(agent.encryptedApiKey, agent.apiKeyIv, agent.apiKeyTag);
+    } catch {
+      return null;
+    }
   }
 
   async create(input: CreateAgentDto): Promise<AgentEntity> {
     const name = typeof input.name === 'string' ? input.name.trim() : '';
     if (!name) {
       throw new BadRequestException('Agent name is required.');
+    }
+
+    let encryptedApiKey: string | null = null;
+    let apiKeyIv: string | null = null;
+    let apiKeyTag: string | null = null;
+    let apiKeyMasked: string | null = null;
+
+    if (input.apiKey && input.apiKey.trim()) {
+      const encrypted = encryptCredential(input.apiKey.trim());
+      encryptedApiKey = encrypted.encrypted;
+      apiKeyIv = encrypted.iv;
+      apiKeyTag = encrypted.tag;
+      apiKeyMasked = encrypted.masked;
     }
 
     const agent = this.agentRepo.create({
@@ -48,18 +88,28 @@ export class AgentsService {
       modelName: input.modelName?.trim() || '',
       settings: input.settings || {},
       credentialReference: input.credentialReference || null,
+      harborHarness: input.harborHarness?.trim() || 'openrouter',
+      encryptedApiKey,
+      apiKeyIv,
+      apiKeyTag,
+      apiKeyMasked,
     });
 
     const savedAgent = await this.agentRepo.save(agent);
 
     // If modelName or settings provided, create the initial agent config version 1
-    if (savedAgent.modelName || Object.keys(savedAgent.settings).length > 0) {
+    if (savedAgent.modelName || Object.keys(savedAgent.settings).length > 0 || savedAgent.apiKeyMasked) {
       const config = this.configRepo.create({
         agentId: savedAgent.id,
         configVersion: 1,
         modelName: savedAgent.modelName || 'default',
         settings: savedAgent.settings,
         credentialReference: savedAgent.credentialReference,
+        harborHarness: savedAgent.harborHarness,
+        encryptedApiKey,
+        apiKeyIv,
+        apiKeyTag,
+        apiKeyMasked,
       });
       await this.configRepo.save(config);
     }
@@ -68,7 +118,17 @@ export class AgentsService {
   }
 
   async update(id: string, input: UpdateAgentDto): Promise<AgentEntity> {
-    const agent = await this.get(id);
+    const agent = typeof this.agentRepo.createQueryBuilder === 'function'
+      ? await this.agentRepo
+          .createQueryBuilder('agent')
+          .addSelect(['agent.encryptedApiKey', 'agent.apiKeyIv', 'agent.apiKeyTag'])
+          .where('agent.id = :id', { id })
+          .getOne()
+      : await this.agentRepo.findOne({ where: { id } });
+
+    if (!agent) {
+      throw new NotFoundException(`Agent with id "${id}" was not found.`);
+    }
 
     if (input.name !== undefined) {
       if (typeof input.name !== 'string' || !input.name.trim()) {
@@ -93,6 +153,10 @@ export class AgentsService {
       agent.status = input.status.trim();
     }
 
+    if (input.harborHarness !== undefined) {
+      agent.harborHarness = input.harborHarness.trim();
+    }
+
     let configUpdated = false;
     if (input.modelName !== undefined) {
       agent.modelName = input.modelName.trim();
@@ -106,6 +170,15 @@ export class AgentsService {
 
     if (input.credentialReference !== undefined) {
       agent.credentialReference = input.credentialReference;
+      configUpdated = true;
+    }
+
+    if (input.apiKey !== undefined && input.apiKey.trim()) {
+      const encrypted = encryptCredential(input.apiKey.trim());
+      agent.encryptedApiKey = encrypted.encrypted;
+      agent.apiKeyIv = encrypted.iv;
+      agent.apiKeyTag = encrypted.tag;
+      agent.apiKeyMasked = encrypted.masked;
       configUpdated = true;
     }
 
@@ -124,6 +197,11 @@ export class AgentsService {
         modelName: updatedAgent.modelName || 'default',
         settings: updatedAgent.settings,
         credentialReference: updatedAgent.credentialReference,
+        harborHarness: updatedAgent.harborHarness,
+        encryptedApiKey: updatedAgent.encryptedApiKey,
+        apiKeyIv: updatedAgent.apiKeyIv,
+        apiKeyTag: updatedAgent.apiKeyTag,
+        apiKeyMasked: updatedAgent.apiKeyMasked,
       });
       await this.configRepo.save(newConfig);
     }

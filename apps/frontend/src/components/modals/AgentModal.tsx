@@ -22,6 +22,9 @@ export function AgentModal({
   const [executionMode, setExecutionMode] = useState(agent?.settings?.executionMode ?? 'docker-sandbox');
   const [timeoutMinutes, setTimeoutMinutes] = useState(agent?.settings?.timeoutMinutes ?? 25);
   const [credentialReference, setCredentialReference] = useState(agent?.credentialReference ?? '');
+  const [apiKey, setApiKey] = useState('');
+  const [harborHarness, setHarborHarness] = useState(agent?.harborHarness ?? 'openrouter');
+  const [showApiKey, setShowApiKey] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -42,6 +45,8 @@ export function AgentModal({
       status: status.trim(),
       description: description.trim(),
       credentialReference: credentialReference.trim() || null,
+      harborHarness,
+      ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
       settings: {
         ...(agent?.settings || {}),
         executionMode,
@@ -180,6 +185,45 @@ export function AgentModal({
               min={5}
               max={120}
             />
+          </label>
+        </div>
+
+        <div className="field-grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <label style={{ margin: 0, marginTop: 12 }}>
+            Harbor Eval Harness
+            <select value={harborHarness} onChange={e => setHarborHarness(e.target.value)}>
+              <option value="openrouter">OpenRouter (Multi-model)</option>
+              <option value="anthropic">Anthropic (Claude)</option>
+              <option value="openai">OpenAI (Codex / GPT-4)</option>
+              <option value="gemini">Google Gemini</option>
+              <option value="ollama">Ollama / Local</option>
+            </select>
+          </label>
+
+          <label style={{ margin: 0, marginTop: 12 }}>
+            Model API Key (AES-256 Encrypted)
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input
+                type={showApiKey ? 'text' : 'password'}
+                value={apiKey}
+                onChange={e => setApiKey(e.target.value)}
+                placeholder={agent?.apiKeyMasked ? `Current: ${agent.apiKeyMasked}` : 'sk-••••••••'}
+                style={{ flex: 1 }}
+              />
+              <button
+                type="button"
+                className="secondary-button"
+                style={{ padding: '6px 10px', fontSize: '0.8rem' }}
+                onClick={() => setShowApiKey(!showApiKey)}
+              >
+                {showApiKey ? 'Hide' : 'Show'}
+              </button>
+            </div>
+            {agent?.apiKeyMasked && !apiKey && (
+              <small style={{ color: '#12b76a', display: 'block', marginTop: 4 }}>
+                Key stored securely: {agent.apiKeyMasked}
+              </small>
+            )}
           </label>
         </div>
 

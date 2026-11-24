@@ -5,6 +5,9 @@ export interface AgentConfig {
   modelName: string;
   settings: Record<string, any>;
   credentialReference?: string | null;
+  harborHarness?: string;
+  apiKeyMasked?: string | null;
+  hasApiKey?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -19,6 +22,9 @@ export interface Agent {
   modelName: string;
   settings: Record<string, any>;
   credentialReference?: string | null;
+  harborHarness?: string;
+  apiKeyMasked?: string | null;
+  hasApiKey?: boolean;
   configs?: AgentConfig[];
   createdAt: string;
   updatedAt: string;

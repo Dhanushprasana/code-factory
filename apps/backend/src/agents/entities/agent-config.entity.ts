@@ -35,6 +35,21 @@ export class AgentConfigEntity {
   @Column({ name: 'credential_reference', type: 'varchar', length: 255, nullable: true })
   credentialReference: string | null;
 
+  @Column({ name: 'encrypted_api_key', type: 'text', nullable: true, select: false })
+  encryptedApiKey: string | null;
+
+  @Column({ name: 'api_key_iv', type: 'varchar', length: 64, nullable: true, select: false })
+  apiKeyIv: string | null;
+
+  @Column({ name: 'api_key_tag', type: 'varchar', length: 64, nullable: true, select: false })
+  apiKeyTag: string | null;
+
+  @Column({ name: 'api_key_masked', type: 'varchar', length: 64, nullable: true })
+  apiKeyMasked: string | null;
+
+  @Column({ name: 'harbor_harness', type: 'varchar', length: 64, default: 'openrouter' })
+  harborHarness: string;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 

@@ -19,6 +19,9 @@ import { ReferenceSolutions1795280500000 } from './database/migrations/179528050
 import { AddContextToRepositoryAnalyses1795280600000 } from './database/migrations/1795280600000-AddContextToRepositoryAnalyses';
 import { AddHarborFilesToTasks1795280700000 } from './database/migrations/1795280700000-AddHarborFilesToTasks';
 import { AddHarborVerificationToTasks1795280800000 } from './database/migrations/1795280800000-AddHarborVerificationToTasks';
+import { AddEncryptedApiKeyToAgents1795290000000 } from './database/migrations/1795290000000-AddEncryptedApiKeyToAgents';
+import { CreateEvaluationsTable1795291000000 } from './database/migrations/1795291000000-CreateEvaluationsTable';
+import { EvaluationsModule } from './evaluations/evaluations.module';
 
 @Module({
   imports: [
@@ -51,6 +54,8 @@ import { AddHarborVerificationToTasks1795280800000 } from './database/migrations
           AddContextToRepositoryAnalyses1795280600000,
           AddHarborFilesToTasks1795280700000,
           AddHarborVerificationToTasks1795280800000,
+          AddEncryptedApiKeyToAgents1795290000000,
+          CreateEvaluationsTable1795291000000,
         ],
         migrationsRun: true,
         synchronize: true,
@@ -65,6 +70,7 @@ import { AddHarborVerificationToTasks1795280800000 } from './database/migrations
     WorkflowModule,
     AgentsModule,
     TasksModule,
+    EvaluationsModule,
   ],
   controllers: [AppController],
 })

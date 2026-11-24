@@ -219,6 +219,16 @@ export function SettingsPage() {
                         <div className="agent-tags">
                           <span className="tag-badge provider">{agent.provider}</span>
                           <span className="tag-badge adapter">{agent.adapterType}</span>
+                          {agent.harborHarness && (
+                            <span className="tag-badge" style={{ background: '#eef4ff', color: '#3538cd' }}>
+                              Harness: {agent.harborHarness}
+                            </span>
+                          )}
+                          {agent.apiKeyMasked && (
+                            <span className="tag-badge" style={{ background: '#ecfdf3', color: '#027a48' }}>
+                              Key: {agent.apiKeyMasked}
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>

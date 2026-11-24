@@ -9,6 +9,7 @@ import { TaskGeneratorPage } from '../../pages/TaskGeneratorPage';
 import { TaskLibraryPage } from '../../pages/TaskLibraryPage';
 import { SettingsPage } from '../../pages/SettingsPage';
 import { AnalysisPage } from '../../pages/AnalysisPage';
+import { LeaderboardPage } from '../../pages/LeaderboardPage';
 
 export function Shell() {
   const [modal, setModal] = useState(false);
@@ -45,6 +46,7 @@ export function Shell() {
         </header>
         <Routes>
           <Route path="/" element={<Overview />} />
+          <Route path="/leaderboard" element={<LeaderboardPage />} />
           <Route path="/projects" element={<Projects onNewProject={() => setModal(true)} />} />
           <Route path="/tasks/new" element={<TaskGeneratorPage />} />
           <Route path="/tasks/:taskId" element={<TaskLibraryPage />} />

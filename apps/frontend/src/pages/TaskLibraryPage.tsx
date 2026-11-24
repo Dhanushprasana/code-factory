@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ClipboardList, History, Sparkles } from 'lucide-react';
+import { CheckCircle2, ClipboardList, History, Play, RefreshCw, Sparkles, XCircle } from 'lucide-react';
 import { apiUrl, request } from '../api/client';
 import { PageHeader } from '../components/common/PageHeader';
 import type { ProjectOption, SavedTask } from '../types';
+import type { Agent } from '../types/agent';
+import type { Evaluation } from '../types/evaluation';
 
 export function TaskLibraryPage() {
   const navigate = useNavigate();
@@ -12,6 +14,10 @@ export function TaskLibraryPage() {
   const [projectId, setProjectId] = useState('');
   const [tasks, setTasks] = useState<SavedTask[]>([]);
   const [task, setTask] = useState<SavedTask | null>(null);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState('');
+  const [evaluations, setEvaluations] = useState<Evaluation[]>([]);
+  const [evaluatingAgent, setEvaluatingAgent] = useState(false);
   const [versions, setVersions] = useState<
     Array<{ id: string; version: number; content: Record<string, any>; createdAt: string }>
   >([]);
@@ -29,7 +35,20 @@ export function TaskLibraryPage() {
     request<ProjectOption[]>(`${apiUrl}/projects`)
       .then(setProjects)
       .catch(reason => setError(reason instanceof Error ? reason.message : 'Could not load projects.'));
+
+    request<Agent[]>(`${apiUrl}/agents`)
+      .then(data => {
+        setAgents(data);
+        if (data.length > 0) setSelectedAgentId(data[0].id);
+      })
+      .catch(() => {});
   }, []);
+
+  const loadEvaluations = (id: string) => {
+    request<Evaluation[]>(`${apiUrl}/evaluations?taskId=${id}`)
+      .then(setEvaluations)
+      .catch(() => {});
+  };
 
   useEffect(() => {
     const url = projectId ? `${apiUrl}/projects/${projectId}/tasks` : `${apiUrl}/tasks`;
@@ -60,9 +79,33 @@ export function TaskLibraryPage() {
         setAcceptanceCriteria(loaded.acceptanceCriteria.join('\n'));
         setConstraints(loaded.constraints.join('\n'));
         setError('');
+        loadEvaluations(taskId);
       })
       .catch(reason => setError(reason instanceof Error ? reason.message : 'Could not load task details.'));
   }, [taskId]);
+
+  const runAgentEvaluation = async () => {
+    if (!task || !selectedAgentId) return;
+    setEvaluatingAgent(true);
+    setError('');
+    setNotice('');
+    try {
+      const evaluation = await request<Evaluation>(`${apiUrl}/evaluations/run`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ taskId: task.id, agentId: selectedAgentId }),
+      });
+      setNotice(`Harbor evaluation started for ${evaluation.modelName}. Running benchmark sandbox...`);
+      setEvaluations(prev => [evaluation, ...prev]);
+      // Poll evaluation after 5 seconds
+      setTimeout(() => loadEvaluations(task.id), 5000);
+      setTimeout(() => loadEvaluations(task.id), 15000);
+    } catch (err: any) {
+      setError(err instanceof Error ? err.message : 'Failed to start agent evaluation.');
+    } finally {
+      setEvaluatingAgent(false);
+    }
+  };
 
   const saveChanges = async () => {
     if (!task) return;
@@ -436,6 +479,137 @@ export function TaskLibraryPage() {
                   </pre>
                 </details>
               )}
+            </div>
+          )}
+        </section>
+      )}
+
+      {task && (
+        <section className="panel" style={{ marginTop: '1.5rem', padding: '1.5rem' }}>
+          <div className="panel-head" style={{ marginBottom: '1rem' }}>
+            <div>
+              <span className="eyebrow">Harbor Agent Evaluation</span>
+              <h2>Autonomous Model Evaluation</h2>
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+              <select
+                value={selectedAgentId}
+                onChange={e => setSelectedAgentId(e.target.value)}
+                style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid #d0d5dd', fontSize: '0.85rem' }}
+                disabled={evaluatingAgent || agents.length === 0}
+              >
+                {agents.map(a => (
+                  <option key={a.id} value={a.id}>
+                    {a.name} ({a.modelName || 'default'} · {a.provider}) {a.apiKeyMasked ? '🔑' : '⚠️ No key'}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="primary-button"
+                disabled={evaluatingAgent || !selectedAgentId}
+                onClick={runAgentEvaluation}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+              >
+                <Play size={15} />
+                {evaluatingAgent ? 'Starting evaluation…' : 'Run Harbor Evaluation'}
+              </button>
+            </div>
+          </div>
+          <p className="task-page-intro" style={{ margin: '0 0 1rem' }}>
+            Dispatch this Harbor task package to the selected agent. Harbor prompts the model with the task instruction,
+            applies the model's generated code solution into an isolated Docker sandbox, and evaluates the reward via <code>tests/test.sh</code>.
+          </p>
+
+          {evaluations.length === 0 ? (
+            <div className="empty-state compact">
+              No evaluations run for this task yet. Select an agent and click &quot;Run Harbor Evaluation&quot; to test model capabilities.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {evaluations.map(ev => {
+                const passed = ev.status === 'passed' || ev.reward >= 1.0;
+                return (
+                  <div
+                    key={ev.id}
+                    style={{
+                      border: '1px solid #eaecf0',
+                      borderRadius: '8px',
+                      padding: '1rem',
+                      background: '#f8fafc',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        {passed ? (
+                          <CheckCircle2 size={18} color="#12b76a" />
+                        ) : ev.status === 'running' ? (
+                          <RefreshCw size={18} color="#f79009" className="animate-spin" />
+                        ) : (
+                          <XCircle size={18} color="#f04438" />
+                        )}
+                        <div>
+                          <strong>{ev.modelName}</strong>
+                          <span style={{ color: '#667085', fontSize: '0.85rem', marginLeft: '6px' }}>
+                            ({ev.agentName} · {ev.provider})
+                          </span>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <span
+                          style={{
+                            padding: '4px 10px',
+                            borderRadius: '4px',
+                            fontSize: '0.8rem',
+                            fontWeight: 600,
+                            textTransform: 'uppercase',
+                            background: passed ? '#ecfdf3' : ev.status === 'running' ? '#fffaeb' : '#fef3f2',
+                            color: passed ? '#027a48' : ev.status === 'running' ? '#b54708' : '#b42318',
+                          }}
+                        >
+                          {ev.status} (Reward: {ev.reward})
+                        </span>
+                        <span style={{ fontSize: '0.8rem', color: '#667085' }}>
+                          {ev.durationMs ? `${(ev.durationMs / 1000).toFixed(1)}s` : '—'}
+                        </span>
+                        <span style={{ fontSize: '0.8rem', color: '#667085' }}>
+                          {new Date(ev.createdAt).toLocaleTimeString()}
+                        </span>
+                      </div>
+                    </div>
+
+                    {ev.errorMessage && (
+                      <div className="inline-notice error" style={{ marginTop: '0.75rem', fontSize: '0.85rem' }}>
+                        {ev.errorMessage}
+                      </div>
+                    )}
+
+                    {ev.trajectoryLogs && (
+                      <details className="reference-artifact" style={{ marginTop: '0.75rem' }}>
+                        <summary style={{ fontSize: '0.85rem', cursor: 'pointer', color: '#344054', fontWeight: 600 }}>
+                          Agent Trajectory & Reasoning Logs
+                        </summary>
+                        <pre
+                          style={{
+                            background: '#101828',
+                            color: '#eaecf0',
+                            padding: '1rem',
+                            borderRadius: '6px',
+                            overflowX: 'auto',
+                            maxHeight: '300px',
+                            fontFamily: 'monospace',
+                            fontSize: '0.8rem',
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-all',
+                            marginTop: '0.5rem',
+                          }}
+                        >
+                          {ev.trajectoryLogs}
+                        </pre>
+                      </details>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </section>
