@@ -11,6 +11,8 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as fs from 'fs';
 import * as path from 'path';
+import { spawn } from 'child_process';
+import { randomUUID } from 'crypto';
 import { In, Repository } from 'typeorm';
 import { ProjectEntity } from '../projects/entities/project.entity';
 import { ProjectRepositoryEntity } from '../repositories/entities/project-repository.entity';
@@ -229,6 +231,24 @@ export class TasksService {
       generation.contextManifest = result.context_manifest;
       generation.candidates = result.tasks;
       await this.generations.save(generation);
+
+      // Store draft Harbor package files in Docker volume
+      try {
+        const draftsDir = path.join(this.storagePath, 'harbor-packages', 'drafts', generation.id);
+        result.tasks.forEach((candidate, idx) => {
+          const harbor = (candidate as any).harbor_files as Record<string, string> | undefined;
+          if (harbor) {
+            this.writeHarborPackageFiles(path.join(draftsDir, `candidate-${idx}`), harbor, {
+              id: `draft-${generation.id}-${idx}`,
+              title: String((candidate as any).title ?? `Draft ${idx + 1}`),
+              description: String((candidate as any).description ?? ''),
+            });
+          }
+        });
+      } catch (volumeError) {
+        this.logger.warn(`Could not write draft Harbor files to volume: ${volumeError instanceof Error ? volumeError.message : volumeError}`);
+      }
+
       return { ...generation, candidates: result.tasks };
     } catch (error) {
       if (generation.status === 'running') {
@@ -287,6 +307,22 @@ export class TasksService {
       baselineManifest,
       contextManifest: generation.contextManifest,
     }));
+
+    // Write Harbor Task Package files to Docker volume storage/harbor-packages/${task.id}
+    const harborFiles = ((original as any)?.harbor_files ?? (input as any)?.harborFiles) as Record<string, string> | undefined;
+    const packageDir = path.join(this.storagePath, 'harbor-packages', task.id);
+    const harborPath = this.writeHarborPackageFiles(packageDir, harborFiles, {
+      id: task.id,
+      title: task.title,
+      description: task.description,
+      requirements: task.requirements,
+      acceptanceCriteria: task.acceptanceCriteria,
+    });
+
+    task.harborFiles = harborFiles ?? null;
+    task.harborPackagePath = harborPath;
+    await this.tasks.save(task);
+
     await this.versions.save(this.versions.create({
       taskId: task.id,
       version: 1,
@@ -336,6 +372,393 @@ export class TasksService {
     return this.versions.find({ where: { taskId }, order: { version: 'DESC' } });
   }
 
+  async verifySolution(taskId: string) {
+    const task = await this.tasks.findOneBy({ id: taskId });
+    if (!task) {
+      throw new NotFoundException('Task was not found.');
+    }
+    const harborFiles = task.harborFiles as Record<string, string> | null;
+    if (!harborFiles || typeof harborFiles !== 'object' || !harborFiles.solve_sh || !harborFiles.test_sh) {
+      throw new BadRequestException('Task does not contain harbor solve.sh and test.sh artifacts to verify.');
+    }
+
+    const baselineList = Array.isArray(task.baselineManifest) ? task.baselineManifest : [];
+    const baseline = baselineList[0] as Record<string, unknown> | undefined;
+    if (!baseline || typeof baseline.snapshotId !== 'string' || typeof baseline.repositoryId !== 'string') {
+      throw new BadRequestException('Task baseline snapshot metadata is missing or incomplete.');
+    }
+
+    const snapshot = await this.findReadySnapshot(baseline.snapshotId, baseline.repositoryId);
+    if (!snapshot?.checkoutPath || !fs.existsSync(snapshot.checkoutPath)) {
+      throw new BadRequestException('The pinned repository snapshot for this task is no longer available on disk.');
+    }
+    this.assertStoragePath(snapshot.checkoutPath);
+
+    const runId = randomUUID();
+    const verificationRoot = path.join(this.storagePath, 'harbor-verifications', task.id, runId);
+    const workspaceDir = path.join(verificationRoot, 'workspace');
+    await fs.promises.mkdir(workspaceDir, { recursive: true });
+
+    this.cleanupBackgroundProcesses();
+
+    try {
+      // 1. Copy repository snapshot to isolated workspace
+      await fs.promises.cp(snapshot.checkoutPath, workspaceDir, {
+        recursive: true,
+        filter: (src) => this.shouldCopySnapshotEntry(src),
+      });
+
+      // 1b. Link or prepare project dependencies (node_modules, rimraf, nest CLI, etc.)
+      await this.symlinkOrPrepareDependencies(snapshot.checkoutPath, workspaceDir);
+      this.ensureSkipLibCheck(workspaceDir);
+      this.patchPackageJsonForDistMain(workspaceDir);
+
+      // Ensure /logs/verifier directory exists
+      try {
+        fs.mkdirSync(path.join(workspaceDir, 'logs', 'verifier'), { recursive: true });
+        if (process.platform === 'linux') {
+          fs.mkdirSync('/logs/verifier', { recursive: true });
+        }
+      } catch {}
+
+      // 2. Execute solve.sh
+      const solveResult = await this.executeScript(harborFiles.solve_sh, workspaceDir, 'solve.sh');
+      if (solveResult.exitCode !== 0) {
+        task.harborVerification = {
+          verifiedAt: new Date().toISOString(),
+          status: 'failed',
+          reward: 0,
+          solveResult,
+          testResult: null,
+          error: `solve.sh failed with exit code ${solveResult.exitCode}`,
+        };
+        const saved = await this.tasks.save(task);
+        return this.toTask(saved);
+      }
+
+      // 3. Execute test.sh
+      const testResult = await this.executeScript(harborFiles.test_sh, workspaceDir, 'test.sh');
+
+      // 4. Check reward: read /logs/verifier/reward.txt or exit code
+      let reward = 0;
+      const candidateRewardFiles = [
+        path.join(workspaceDir, 'logs', 'verifier', 'reward.txt'),
+        path.join(workspaceDir, 'logs', 'reward.txt'),
+        path.join(verificationRoot, 'logs', 'verifier', 'reward.txt'),
+        '/logs/verifier/reward.txt',
+      ];
+      let foundRewardFile = false;
+      for (const rf of candidateRewardFiles) {
+        if (fs.existsSync(rf)) {
+          try {
+            const raw = fs.readFileSync(rf, 'utf8').trim();
+            const parsed = parseFloat(raw);
+            if (!isNaN(parsed)) {
+              reward = parsed;
+              foundRewardFile = true;
+              break;
+            }
+          } catch {}
+        }
+      }
+
+      if (!foundRewardFile) {
+        reward = testResult.exitCode === 0 ? 1 : 0;
+      }
+
+      const passed = reward >= 1 && testResult.exitCode === 0;
+      task.harborVerification = {
+        verifiedAt: new Date().toISOString(),
+        status: passed ? 'passed' : 'failed',
+        reward,
+        solveResult,
+        testResult,
+        error: passed
+          ? null
+          : reward < 1
+            ? `Verification reward was ${reward} (expected 1.0)`
+            : `test.sh failed with exit code ${testResult.exitCode}`,
+      };
+
+      const saved = await this.tasks.save(task);
+      return this.toTask(saved);
+    } finally {
+      this.cleanupBackgroundProcesses();
+      await fs.promises.rm(verificationRoot, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
+  private cleanupBackgroundProcesses() {
+    try {
+      if (process.platform === 'linux') {
+        const procDirs = fs.readdirSync('/proc');
+        for (const pidStr of procDirs) {
+          if (!/^\d+$/.test(pidStr) || pidStr === '1' || pidStr === String(process.pid)) continue;
+          try {
+            const cmd = fs.readFileSync(path.join('/proc', pidStr, 'cmdline'), 'utf8');
+            if (cmd.includes('dist/main') || cmd.includes('test.sh') || cmd.includes('solve.sh')) {
+              process.kill(Number(pidStr), 'SIGKILL');
+            }
+          } catch {}
+        }
+      }
+    } catch {}
+  }
+
+  private shouldCopySnapshotEntry(sourcePath: string): boolean {
+    const name = path.basename(sourcePath);
+    const excludedNames = new Set([
+      '.git',
+      'node_modules',
+      '.venv',
+      'venv',
+      '__pycache__',
+      'dist',
+      'build',
+      '.next',
+      '.turbo',
+    ]);
+    if (excludedNames.has(name)) {
+      return false;
+    }
+    if (name.startsWith('.env') && !['.env.example', '.env.sample', '.env.template'].includes(name)) {
+      return false;
+    }
+    try {
+      return !fs.lstatSync(sourcePath).isSymbolicLink();
+    } catch {
+      return false;
+    }
+  }
+
+  private sanitizeScriptForWorkspace(script: string, workspaceDir: string): string {
+    const normalizedDir = workspaceDir.replace(/\\/g, '/');
+    return script
+      .replace(/\r\n/g, '\n')
+      .replace(/cd \/app\b/g, `cd "${normalizedDir}"`)
+      .replace(/\/app\b/g, normalizedDir)
+      .replace(/npm run start:prod\s*&/g, 'npm run start:prod > /tmp/nest_server.log 2>&1 &');
+  }
+
+  private getBashPath(): string {
+    if (process.platform === 'win32') {
+      const gitBash = 'C:\\Program Files\\Git\\bin\\bash.exe';
+      if (fs.existsSync(gitBash)) {
+        return gitBash;
+      }
+      return 'bash';
+    }
+    if (fs.existsSync('/bin/bash')) {
+      return '/bin/bash';
+    }
+    return 'bash';
+  }
+
+  private async symlinkOrPrepareDependencies(snapshotPath: string, workspaceDir: string) {
+    let linkedAny = false;
+    const scanAndSymlink = (dir: string, depth = 0) => {
+      if (depth > 4) return;
+      try {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isDirectory()) {
+            const fullPath = path.join(dir, entry.name);
+            if (entry.name === 'node_modules') {
+              const rel = path.relative(snapshotPath, fullPath);
+              const targetInWorkspace = path.join(workspaceDir, rel);
+              if (!fs.existsSync(targetInWorkspace)) {
+                try {
+                  fs.symlinkSync(fullPath, targetInWorkspace, process.platform === 'win32' ? 'junction' : 'dir');
+                  linkedAny = true;
+                } catch {}
+              }
+            } else if (entry.name !== '.git' && entry.name !== 'dist' && entry.name !== 'build') {
+              scanAndSymlink(fullPath, depth + 1);
+            }
+          }
+        }
+      } catch {}
+    };
+
+    scanAndSymlink(snapshotPath);
+
+    if (!linkedAny) {
+      const packageDirs: string[] = [];
+      const findPackageJson = (dir: string, depth = 0) => {
+        if (depth > 3) return;
+        try {
+          if (fs.existsSync(path.join(dir, 'package.json'))) {
+            packageDirs.push(dir);
+          }
+          const entries = fs.readdirSync(dir, { withFileTypes: true });
+          for (const entry of entries) {
+            if (entry.isDirectory() && entry.name !== '.git' && entry.name !== 'node_modules' && entry.name !== 'dist') {
+              findPackageJson(path.join(dir, entry.name), depth + 1);
+            }
+          }
+        } catch {}
+      };
+      findPackageJson(workspaceDir);
+
+      for (const dir of packageDirs) {
+        if (!fs.existsSync(path.join(dir, 'node_modules'))) {
+          try {
+            await this.executeScript(
+              'npm install --legacy-peer-deps --no-audit --no-fund',
+              dir,
+              'setup_deps.sh',
+              180_000,
+            );
+          } catch {}
+        }
+      }
+    }
+  }
+
+  private ensureSkipLibCheck(workspaceDir: string) {
+    const findTsConfigs = (dir: string, depth = 0) => {
+      if (depth > 3) return;
+      try {
+        const tsConfigPath = path.join(dir, 'tsconfig.json');
+        if (fs.existsSync(tsConfigPath)) {
+          try {
+            const parsed = JSON.parse(fs.readFileSync(tsConfigPath, 'utf8'));
+            if (parsed.compilerOptions && parsed.compilerOptions.skipLibCheck !== true) {
+              parsed.compilerOptions.skipLibCheck = true;
+              fs.writeFileSync(tsConfigPath, JSON.stringify(parsed, null, 2), 'utf8');
+            }
+          } catch {}
+        }
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isDirectory() && entry.name !== '.git' && entry.name !== 'node_modules') {
+            findTsConfigs(path.join(dir, entry.name), depth + 1);
+          }
+        }
+      } catch {}
+    };
+    findTsConfigs(workspaceDir);
+  }
+
+  private patchPackageJsonForDistMain(workspaceDir: string) {
+    const scan = (dir: string, depth = 0) => {
+      if (depth > 3) return;
+      try {
+        const pkgPath = path.join(dir, 'package.json');
+        if (fs.existsSync(pkgPath)) {
+          const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+          if (pkg.scripts && typeof pkg.scripts['start:prod'] === 'string') {
+            pkg.scripts['postbuild'] =
+              'node -e \'const fs=require("fs");if(fs.existsSync("dist/src/main.js"))fs.writeFileSync("dist/main.js","require(\\"./src/main\\");\\n");\'';
+            fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2), 'utf8');
+          }
+        }
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isDirectory() && entry.name !== '.git' && entry.name !== 'node_modules') {
+            scan(path.join(dir, entry.name), depth + 1);
+          }
+        }
+      } catch {}
+    };
+    scan(workspaceDir);
+  }
+
+  private async executeScript(
+    scriptContent: string,
+    workspaceDir: string,
+    scriptName: string,
+    timeoutMs = 180_000,
+  ): Promise<{ exitCode: number; output: string; durationMs: number }> {
+    const startTime = Date.now();
+    const scriptFile = path.join(workspaceDir, `__run_${scriptName}`);
+    const sanitized = this.sanitizeScriptForWorkspace(scriptContent, workspaceDir);
+    await fs.promises.writeFile(scriptFile, sanitized, { encoding: 'utf8', mode: 0o755 });
+
+    const bashBinary = this.getBashPath();
+    const pathDelimiter = process.platform === 'win32' ? ';' : ':';
+    const binPaths: string[] = [];
+    const checkBin = (dir: string) => {
+      const bp = path.join(dir, 'node_modules', '.bin');
+      if (fs.existsSync(bp)) binPaths.push(bp);
+    };
+    checkBin(workspaceDir);
+    checkBin(path.join(workspaceDir, 'backend'));
+
+    const currentPath = process.env.PATH || '';
+    const augmentedPath = binPaths.length > 0
+      ? `${binPaths.join(pathDelimiter)}${pathDelimiter}${currentPath}`
+      : currentPath;
+
+    const env = {
+      ...process.env,
+      POSTGRES_HOST: process.env.DATABASE_HOST || 'postgres',
+      DATABASE_HOST: process.env.DATABASE_HOST || 'postgres',
+      PATH: augmentedPath,
+      CI: 'true',
+      WORKSPACE: workspaceDir,
+    };
+
+    return new Promise((resolve) => {
+      let output = '';
+      const child = spawn(bashBinary, [scriptFile], {
+        cwd: workspaceDir,
+        env,
+        windowsHide: true,
+      });
+
+      const append = (data: Buffer) => {
+        const text = data.toString();
+        if (output.length < 50_000) {
+          output += text.slice(0, 50_000 - output.length);
+        }
+      };
+
+      child.stdout.on('data', append);
+      child.stderr.on('data', append);
+
+      let resolved = false;
+      const finish = (code: number | null) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
+        void fs.promises.rm(scriptFile, { force: true }).catch(() => {});
+        const durationMs = Date.now() - startTime;
+        resolve({
+          exitCode: code ?? (killed ? -1 : 0),
+          output: output.trim(),
+          durationMs,
+        });
+      };
+
+      let killed = false;
+      const timer = setTimeout(() => {
+        killed = true;
+        child.kill('SIGTERM');
+        setTimeout(() => {
+          try {
+            child.kill('SIGKILL');
+          } catch {}
+        }, 5000);
+        output += `\n[Execution timed out after ${timeoutMs / 1000}s]`;
+        finish(-1);
+      }, timeoutMs);
+
+      child.on('error', (err) => {
+        output += `\nExecution error: ${err.message}`;
+        finish(-1);
+      });
+
+      child.on('exit', (code) => {
+        setTimeout(() => finish(code), 200);
+      });
+
+      child.on('close', (code) => {
+        finish(code);
+      });
+    });
+  }
+
   private async resolveRepositories(projectId: string, analysisIds: string[]) {
     const associations = await this.projectRepositories.find({
       where: { projectId },
@@ -367,6 +790,12 @@ export class TasksService {
       if (!analysis.summary || !analysis.report) {
         throw new BadRequestException('A selected analysis does not contain a complete report.');
       }
+      const contextMdPath = path.join(snapshot.checkoutPath, 'CONTEXT.md');
+      const diskContextMd = fs.existsSync(contextMdPath) ? fs.readFileSync(contextMdPath, 'utf8') : null;
+      const contextMarkdown = (analysis.contextMarkdown && analysis.contextMarkdown.trim())
+        ? analysis.contextMarkdown
+        : diskContextMd;
+
       resolved.push({
         repository_id: analysis.repositoryId,
         repository_name: association.repository.fullName,
@@ -376,6 +805,7 @@ export class TasksService {
         repository_path: snapshot.checkoutPath,
         summary: analysis.summary,
         report: analysis.report,
+        context_markdown: contextMarkdown,
       });
     }
     return resolved;
@@ -522,7 +952,70 @@ export class TasksService {
       baselineManifest: task.baselineManifest,
       contextManifest: task.contextManifest,
       evidence: task.evidence,
+      harborFiles: task.harborFiles,
+      harborPackagePath: task.harborPackagePath,
     };
+  }
+
+  private writeHarborPackageFiles(
+    targetDir: string,
+    harborFiles: Record<string, string> | undefined,
+    taskInfo: {
+      id?: string;
+      title?: string;
+      description?: string;
+      requirements?: string[];
+      acceptanceCriteria?: string[];
+      commitSha?: string;
+    },
+  ): string | null {
+    if (!harborFiles || typeof harborFiles !== 'object') {
+      return null;
+    }
+    fs.mkdirSync(targetDir, { recursive: true });
+    fs.mkdirSync(path.join(targetDir, 'environment'), { recursive: true });
+    fs.mkdirSync(path.join(targetDir, 'solution'), { recursive: true });
+    fs.mkdirSync(path.join(targetDir, 'tests'), { recursive: true });
+
+    if (typeof harborFiles.instruction_md === 'string') {
+      fs.writeFileSync(path.join(targetDir, 'instruction.md'), harborFiles.instruction_md, 'utf8');
+    }
+    if (typeof harborFiles.task_toml === 'string') {
+      fs.writeFileSync(path.join(targetDir, 'task.toml'), harborFiles.task_toml, 'utf8');
+    }
+    if (typeof harborFiles.dockerfile === 'string') {
+      fs.writeFileSync(path.join(targetDir, 'environment', 'Dockerfile'), harborFiles.dockerfile, 'utf8');
+    }
+    if (typeof harborFiles.solve_sh === 'string') {
+      fs.writeFileSync(path.join(targetDir, 'solution', 'solve.sh'), harborFiles.solve_sh, 'utf8');
+    }
+    if (typeof harborFiles.test_sh === 'string') {
+      fs.writeFileSync(path.join(targetDir, 'tests', 'test.sh'), harborFiles.test_sh, 'utf8');
+    }
+
+    const packageId = taskInfo.id || path.basename(targetDir);
+    const bundleFile = path.join(this.storagePath, `${packageId}.harbor.json`);
+    const relativeDir = path.relative(this.storagePath, targetDir).replace(/\\/g, '/');
+    const exportBundle = {
+      schema: 'https://harborframework.com/spec/v1.json',
+      package: {
+        id: packageId,
+        title: taskInfo.title,
+        harborSchema: 'v1',
+        harborPath: relativeDir,
+        createdAt: new Date().toISOString(),
+        files: {
+          instruction: 'instruction.md',
+          configuration: 'task.toml',
+          environment: 'environment/Dockerfile',
+          solution: 'solution/solve.sh',
+          verifier: 'tests/test.sh',
+        },
+      },
+      artifacts: harborFiles,
+    };
+    fs.writeFileSync(bundleFile, JSON.stringify(exportBundle, null, 2), 'utf8');
+    return relativeDir;
   }
 
   private toTask(task: TaskEntity) {
