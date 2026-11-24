@@ -626,17 +626,37 @@ environment:
         if stderr:
             trajectory_logs.append(f"\n[stderr]\n{stderr}")
 
-        # Check reward from verifier log file or harbor output
-        reward_candidates = list(package_dir.glob("**/reward.txt")) + list(ARTIFACT_ROOT.glob("logs/verifier/reward.txt"))
-        for rf in reward_candidates:
+        # Check result.json from Harbor job directory
+        result_json_path = package_dir / "jobs" / job_id / "result.json"
+        has_error = False
+        if result_json_path.exists():
             try:
-                reward = float(rf.read_text(encoding="utf-8").strip())
-                break
-            except Exception:
-                pass
-        else:
-            if proc.returncode == 0:
-                reward = 1.0
+                res_data = json.loads(result_json_path.read_text(encoding="utf-8"))
+                stats = res_data.get("stats", {})
+                if stats.get("n_errored_trials", 0) > 0:
+                    has_error = True
+                evals = stats.get("evals", {})
+                for eval_key, eval_val in evals.items():
+                    if isinstance(eval_val, dict):
+                        if eval_val.get("n_errors", 0) > 0:
+                            has_error = True
+                        reward_stats = eval_val.get("reward_stats", {})
+                        if "mean" in reward_stats and reward_stats["mean"] is not None:
+                            reward = float(reward_stats["mean"])
+                        elif "reward" in eval_val and eval_val["reward"] is not None:
+                            reward = float(eval_val["reward"])
+            except Exception as e:
+                logger.warning("Could not parse Harbor result.json: %s", e)
+
+        # Check reward from verifier log file if not already determined from result.json
+        if reward == 0.0 and not has_error:
+            reward_candidates = list(package_dir.glob("**/reward.txt")) + list(ARTIFACT_ROOT.glob("logs/verifier/reward.txt"))
+            for rf in reward_candidates:
+                try:
+                    reward = float(rf.read_text(encoding="utf-8").strip())
+                    break
+                except Exception:
+                    pass
 
         # Capture any agent trajectory logs (e.g. aider.txt, aider.chat.history.md)
         agent_logs = list(package_dir.glob("**/aider.txt")) + list(package_dir.glob("**/aider.chat.history.md"))
@@ -648,7 +668,13 @@ environment:
             except Exception:
                 pass
 
-        status = "passed" if reward >= 1.0 else "failed"
+        if has_error:
+            status = "failed"
+            error_message = "Harbor reported one or more trial errors or exceptions during execution."
+        elif reward >= 1.0:
+            status = "passed"
+        else:
+            status = "failed"
 
     except subprocess.TimeoutExpired:
         status = "failed"
