@@ -34,9 +34,4 @@ export class WorkflowController {
   executeAgents(@Param('id') id: string, @Body() body: any) {
     return this.appService.executeAgents(id, body);
   }
-
-  @Get('evaluations')
-  evaluations() {
-    return this.appService.evaluations();
-  }
 }

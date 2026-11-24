@@ -50,6 +50,18 @@ export function TaskLibraryPage() {
       .catch(() => {});
   };
 
+  // Poll while any evaluation is running
+  useEffect(() => {
+    const hasRunning = evaluations.some(e => e.status === 'running');
+    if (!hasRunning || !taskId) return;
+
+    const interval = setInterval(() => {
+      loadEvaluations(taskId);
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [evaluations, taskId]);
+
   useEffect(() => {
     const url = projectId ? `${apiUrl}/projects/${projectId}/tasks` : `${apiUrl}/tasks`;
     request<SavedTask[]>(url)
@@ -512,6 +524,14 @@ export function TaskLibraryPage() {
               >
                 <Play size={15} />
                 {evaluatingAgent ? 'Starting evaluation…' : 'Run Harbor Evaluation'}
+              </button>
+              <button
+                className="secondary-button"
+                onClick={() => task && loadEvaluations(task.id)}
+                title="Refresh evaluations"
+                style={{ padding: '6px 10px', display: 'flex', alignItems: 'center', gap: '4px' }}
+              >
+                <RefreshCw size={14} className={evaluations.some(e => e.status === 'running') ? 'animate-spin' : ''} />
               </button>
             </div>
           </div>
