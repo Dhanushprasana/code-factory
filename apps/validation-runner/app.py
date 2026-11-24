@@ -541,10 +541,15 @@ def evaluate_harbor_task(
             test_dir = package_dir / "tests"
             test_dir.mkdir(exist_ok=True)
             test_sh_content = h["test_sh"]
-            if "trap " not in test_sh_content and "/logs/verifier/reward.txt" in test_sh_content:
+            if "_harbor_cleanup" not in test_sh_content and "/logs/verifier/reward.txt" in test_sh_content:
                 test_sh_content = re.sub(
                     r"^(#!/[^\n]+\n)",
-                    r'\1mkdir -p /logs/verifier\ntrap \'if [ ! -f /logs/verifier/reward.txt ]; then echo 0 > /logs/verifier/reward.txt; fi\' EXIT\n',
+                    lambda m: (
+                        m.group(1)
+                        + "mkdir -p /logs/verifier\n"
+                        + "_harbor_cleanup() { [ -f /logs/verifier/reward.txt ] || echo 0 > /logs/verifier/reward.txt; }\n"
+                        + "trap _harbor_cleanup EXIT\n"
+                    ),
                     test_sh_content,
                     count=1,
                 )
