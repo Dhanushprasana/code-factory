@@ -553,6 +553,12 @@ def evaluate_harbor_task(
     # Ensure environment directory has codebase snapshot files and Harbor dependencies
     env_dir = package_dir / "environment"
     env_dir.mkdir(exist_ok=True)
+    dockerignore_file = env_dir / ".dockerignore"
+    if not dockerignore_file.exists():
+        dockerignore_file.write_text(
+            "**/node_modules\n**/dist\n**/.git\n**/.next\n**/__pycache__\n**/.venv\n",
+            encoding="utf-8",
+        )
     dockerfile_file = env_dir / "Dockerfile"
     if dockerfile_file.exists():
         df_content = dockerfile_file.read_text(encoding="utf-8")
@@ -561,14 +567,19 @@ def evaluate_harbor_task(
             dockerfile_file.write_text(patched_df, encoding="utf-8")
 
     repo_dirs = list((ARTIFACT_ROOT / "repositories").glob("*/*"))
-    if repo_dirs and len([p for p in env_dir.iterdir() if p.name != "Dockerfile"]) == 0:
+    if repo_dirs and len([p for p in env_dir.iterdir() if p.name not in ("Dockerfile", ".dockerignore")]) == 0:
         latest_repo = repo_dirs[0]
         for item in latest_repo.iterdir():
-            if item.name not in (".git", "Dockerfile"):
+            if item.name not in (".git", "Dockerfile", "node_modules", "dist", ".next", "__pycache__", ".venv"):
                 target = env_dir / item.name
                 if not target.exists():
                     if item.is_dir():
-                        shutil.copytree(item, target, dirs_exist_ok=True)
+                        shutil.copytree(
+                            item,
+                            target,
+                            dirs_exist_ok=True,
+                            ignore=shutil.ignore_patterns("node_modules", ".git", "dist", ".next", "__pycache__", ".venv"),
+                        )
                     else:
                         shutil.copy2(item, target)
 
