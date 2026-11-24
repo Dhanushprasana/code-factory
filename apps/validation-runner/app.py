@@ -499,10 +499,38 @@ def evaluate_harbor_task(
     eval_env["HARBOR_TASK_DIR"] = str(package_dir)
     eval_env["HARBOR_MODEL"] = request.model_name
 
+    # Format model identifier with harness prefix if needed by Harbor's LiteLLM backend
+    formatted_model = request.model_name
+    if harness == "openrouter" and not request.model_name.startswith("openrouter/"):
+        formatted_model = f"openrouter/{request.model_name}"
+    elif harness == "anthropic" and not request.model_name.startswith("anthropic/"):
+        formatted_model = f"anthropic/{request.model_name}"
+    elif harness == "openai" and not request.model_name.startswith("openai/"):
+        formatted_model = f"openai/{request.model_name}"
+
+    # Synthesize job.yaml for Harbor job orchestration
+    job_yaml_path = package_dir / "job.yaml"
+    job_yaml_content = f"""job_name: eval-{request.task_id}
+jobs_dir: jobs
+n_attempts: 1
+
+tasks:
+  - path: "{package_dir.as_posix()}"
+
+agents:
+  - name: "{harness}"
+    model_name: "{formatted_model}"
+    timeout: {request.timeout_seconds}
+
+environment:
+  type: docker
+"""
+    job_yaml_path.write_text(job_yaml_content, encoding="utf-8")
+
     logger.info(
-        "Starting Harbor evaluation for task %s with model %s (harness: %s)",
+        "Starting Harbor evaluation for task %s with model %s (harness: %s, job.yaml generated)",
         request.task_id,
-        request.model_name,
+        formatted_model,
         harness,
     )
 
@@ -519,8 +547,7 @@ def evaluate_harbor_task(
         cmd = [
             harbor_bin,
             "run",
-            "--path", str(package_dir),
-            "--model", request.model_name,
+            "-c", str(job_yaml_path),
         ]
     else:
         # Fallback to python -m harbor if installed in venv
@@ -528,8 +555,7 @@ def evaluate_harbor_task(
             "python3",
             "-m", "harbor",
             "run",
-            "--path", str(package_dir),
-            "--model", request.model_name,
+            "-c", str(job_yaml_path),
         ]
 
     try:
