@@ -703,7 +703,7 @@ job_name: {job_id}
 jobs_dir: jobs
 n_concurrent_trials: 1
 n_attempts: 1
-timeout_multiplier: 2.0
+timeout_multiplier: 1.0
 
 tasks:
   - path: "{package_dir.as_posix()}"
@@ -754,7 +754,7 @@ environment:
             env=eval_env,
             capture_output=True,
             text=True,
-            timeout=request.timeout_seconds,
+            timeout=request.timeout_seconds + 180,
         )
 
         stdout = proc.stdout or ""
