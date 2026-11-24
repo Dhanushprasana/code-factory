@@ -13,8 +13,9 @@ FROM node:22-bookworm-slim
 
 WORKDIR /workspace
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get install -y --no-install-recommends git ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install -g rimraf
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=4000
