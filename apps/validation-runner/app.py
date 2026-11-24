@@ -504,6 +504,21 @@ def evaluate_harbor_task(
         if normalized_toml != current_toml:
             task_toml_path.write_text(normalized_toml, encoding="utf-8")
 
+    # Ensure environment directory has codebase snapshot files if Dockerfile copies them
+    env_dir = package_dir / "environment"
+    env_dir.mkdir(exist_ok=True)
+    repo_dirs = list((ARTIFACT_ROOT / "repositories").glob("*/*"))
+    if repo_dirs and len([p for p in env_dir.iterdir() if p.name != "Dockerfile"]) == 0:
+        latest_repo = repo_dirs[0]
+        for item in latest_repo.iterdir():
+            if item.name not in (".git", "Dockerfile"):
+                target = env_dir / item.name
+                if not target.exists():
+                    if item.is_dir():
+                        shutil.copytree(item, target, dirs_exist_ok=True)
+                    else:
+                        shutil.copy2(item, target)
+
     # Set up credentials in environment for Harbor execution
     eval_env = os.environ.copy()
     harness = (request.harbor_harness or "aider").lower()
