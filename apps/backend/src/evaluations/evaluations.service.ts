@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { Agent as UndiciAgent } from 'undici';
 import { EvaluationEntity } from './entities/evaluation.entity';
 import { AgentsService } from '../agents/agents.service';
 import { TaskEntity } from '../tasks/entities/task.entity';
@@ -117,6 +118,11 @@ export class EvaluationsService {
     timeoutSeconds: number,
   ) {
     const startTime = Date.now();
+    const dispatcher = new UndiciAgent({
+      headersTimeout: 0,
+      bodyTimeout: 0,
+      connectTimeout: 30_000,
+    });
     try {
       const response = await fetch(`${this.runnerUrl}/harbor/evaluate`, {
         method: 'POST',
@@ -134,6 +140,9 @@ export class EvaluationsService {
           timeout_seconds: timeoutSeconds,
           harbor_files: task.harborFiles,
         }),
+        // @ts-expect-error undici dispatcher is supported in Node fetch
+        dispatcher,
+        signal: AbortSignal.timeout((timeoutSeconds + 180) * 1000),
       });
 
       const result = await response.json().catch(() => ({}));
@@ -152,12 +161,15 @@ export class EvaluationsService {
         errorMessage: result.error_message || (!response.ok ? `Runner responded with HTTP ${response.status}` : null),
       });
     } catch (error: any) {
+      const detail = error?.cause?.message ? `${error.message} (${error.cause.message})` : (error.message || 'Unknown runner error');
       await this.evaluationRepo.update(evaluationId, {
         status: 'error',
         durationMs: Date.now() - startTime,
-        errorMessage: error.message || 'Unknown runner error',
-        trajectoryLogs: `Execution failed with error: ${error.message}`,
+        errorMessage: detail,
+        trajectoryLogs: `Execution failed with error: ${detail}`,
       });
+    } finally {
+      await dispatcher.close().catch(() => undefined);
     }
   }
 

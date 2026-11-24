@@ -488,6 +488,8 @@ def _ensure_dockerfile_agent_dependencies(dockerfile_content: str) -> str:
         "RUN uv python install 3.12 && \\\n"
         "    uv tool install --python 3.12 aider-chat && \\\n"
         "    ln -sf /root/.local/bin/aider /usr/local/bin/aider\n"
+        "RUN printf 'node_modules/\\ndist/\\n.next/\\ncoverage/\\n.venv/\\n__pycache__/\\n*.log\\n' >> /app/.gitignore && \\\n"
+        "    cp /app/.gitignore /app/.aiderignore\n"
     )
 
     if "WORKDIR" in dockerfile_content:
