@@ -488,21 +488,21 @@ def _ensure_dockerfile_agent_dependencies(dockerfile_content: str) -> str:
         "RUN uv python install 3.12 && \\\n"
         "    uv tool install --python 3.12 aider-chat && \\\n"
         "    ln -sf /root/.local/bin/aider /usr/local/bin/aider\n"
-        "RUN printf 'node_modules/\\ndist/\\n.next/\\ncoverage/\\n.venv/\\n__pycache__/\\n*.log\\n' >> /app/.gitignore && \\\n"
+        "RUN for p in node_modules/ dist/ .next/ coverage/ .venv/ __pycache__/ '*.log'; do echo \"$p\" >> /app/.gitignore; done && \\\n"
         "    cp /app/.gitignore /app/.aiderignore\n"
     )
 
     if "WORKDIR" in dockerfile_content:
         dockerfile_content = re.sub(
             r"(WORKDIR\s+[^\n]+\n)",
-            r"\1" + setup_block,
+            lambda m: m.group(1) + setup_block,
             dockerfile_content,
             count=1,
         )
     else:
         dockerfile_content = re.sub(
             r"(FROM\s+[^\n]+\n)",
-            r"\1" + setup_block,
+            lambda m: m.group(1) + setup_block,
             dockerfile_content,
             count=1,
         )
