@@ -13,6 +13,14 @@ export type TaskContextComponent = {
 
 export type TaskProvider = 'openrouter' | 'ollama';
 
+export type HarborFiles = {
+  instruction_md: string;
+  task_toml: string;
+  dockerfile: string;
+  solve_sh: string;
+  test_sh: string;
+};
+
 export type TaskCandidate = {
   title: string;
   description: string;
@@ -31,6 +39,7 @@ export type TaskCandidate = {
     end_line: number;
     symbol?: string | null;
   }>;
+  harbor_files?: HarborFiles | null;
 };
 
 export type TaskGeneration = {
@@ -62,6 +71,8 @@ export type SavedTask = {
   baselineManifest: Array<{ repositoryId: string; snapshotId: string; analysisId: string; commitSha: string }>;
   contextManifest: Record<string, any>;
   evidence: TaskCandidate['evidence'];
+  harborFiles?: HarborFiles | null;
+  harborPackagePath?: string | null;
   createdAt: string;
   updatedAt: string;
 };

@@ -490,6 +490,43 @@ export function TaskGeneratorPage() {
                       onChange={event => changeDraft('constraints', event.target.value.split(/\r?\n/))}
                     />
                   </label>
+                  {draft.harbor_files && (
+                    <div className="task-detail-section" style={{ marginTop: 16 }}>
+                      <h3>Harbor Task Package Artifacts</h3>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
+                        <details className="reference-artifact">
+                          <summary>instruction.md</summary>
+                          <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 200, overflow: 'auto', fontSize: 12, padding: 8, background: '#f8fafc' }}>
+                            {draft.harbor_files.instruction_md}
+                          </pre>
+                        </details>
+                        <details className="reference-artifact">
+                          <summary>task.toml (Harbor v1.4)</summary>
+                          <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 150, overflow: 'auto', fontSize: 12, padding: 8, background: '#f8fafc' }}>
+                            {draft.harbor_files.task_toml}
+                          </pre>
+                        </details>
+                        <details className="reference-artifact">
+                          <summary>environment/Dockerfile</summary>
+                          <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 150, overflow: 'auto', fontSize: 12, padding: 8, background: '#f8fafc' }}>
+                            {draft.harbor_files.dockerfile}
+                          </pre>
+                        </details>
+                        <details className="reference-artifact">
+                          <summary>solution/solve.sh</summary>
+                          <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 150, overflow: 'auto', fontSize: 12, padding: 8, background: '#f8fafc' }}>
+                            {draft.harbor_files.solve_sh}
+                          </pre>
+                        </details>
+                        <details className="reference-artifact">
+                          <summary>tests/test.sh (reward verifier)</summary>
+                          <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 150, overflow: 'auto', fontSize: 12, padding: 8, background: '#f8fafc' }}>
+                            {draft.harbor_files.test_sh}
+                          </pre>
+                        </details>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <aside className="task-evidence-panel">
                   <h3>Repository evidence</h3>

@@ -229,6 +229,24 @@ export class TasksService {
       generation.contextManifest = result.context_manifest;
       generation.candidates = result.tasks;
       await this.generations.save(generation);
+
+      // Store draft Harbor package files in Docker volume
+      try {
+        const draftsDir = path.join(this.storagePath, 'harbor-packages', 'drafts', generation.id);
+        result.tasks.forEach((candidate, idx) => {
+          const harbor = (candidate as any).harbor_files as Record<string, string> | undefined;
+          if (harbor) {
+            this.writeHarborPackageFiles(path.join(draftsDir, `candidate-${idx}`), harbor, {
+              id: `draft-${generation.id}-${idx}`,
+              title: String((candidate as any).title ?? `Draft ${idx + 1}`),
+              description: String((candidate as any).description ?? ''),
+            });
+          }
+        });
+      } catch (volumeError) {
+        this.logger.warn(`Could not write draft Harbor files to volume: ${volumeError instanceof Error ? volumeError.message : volumeError}`);
+      }
+
       return { ...generation, candidates: result.tasks };
     } catch (error) {
       if (generation.status === 'running') {
@@ -287,6 +305,22 @@ export class TasksService {
       baselineManifest,
       contextManifest: generation.contextManifest,
     }));
+
+    // Write Harbor Task Package files to Docker volume storage/harbor-packages/${task.id}
+    const harborFiles = ((original as any)?.harbor_files ?? (input as any)?.harborFiles) as Record<string, string> | undefined;
+    const packageDir = path.join(this.storagePath, 'harbor-packages', task.id);
+    const harborPath = this.writeHarborPackageFiles(packageDir, harborFiles, {
+      id: task.id,
+      title: task.title,
+      description: task.description,
+      requirements: task.requirements,
+      acceptanceCriteria: task.acceptanceCriteria,
+    });
+
+    task.harborFiles = harborFiles ?? null;
+    task.harborPackagePath = harborPath;
+    await this.tasks.save(task);
+
     await this.versions.save(this.versions.create({
       taskId: task.id,
       version: 1,
@@ -367,6 +401,12 @@ export class TasksService {
       if (!analysis.summary || !analysis.report) {
         throw new BadRequestException('A selected analysis does not contain a complete report.');
       }
+      const contextMdPath = path.join(snapshot.checkoutPath, 'CONTEXT.md');
+      const diskContextMd = fs.existsSync(contextMdPath) ? fs.readFileSync(contextMdPath, 'utf8') : null;
+      const contextMarkdown = (analysis.contextMarkdown && analysis.contextMarkdown.trim())
+        ? analysis.contextMarkdown
+        : diskContextMd;
+
       resolved.push({
         repository_id: analysis.repositoryId,
         repository_name: association.repository.fullName,
@@ -376,6 +416,7 @@ export class TasksService {
         repository_path: snapshot.checkoutPath,
         summary: analysis.summary,
         report: analysis.report,
+        context_markdown: contextMarkdown,
       });
     }
     return resolved;
@@ -522,7 +563,70 @@ export class TasksService {
       baselineManifest: task.baselineManifest,
       contextManifest: task.contextManifest,
       evidence: task.evidence,
+      harborFiles: task.harborFiles,
+      harborPackagePath: task.harborPackagePath,
     };
+  }
+
+  private writeHarborPackageFiles(
+    targetDir: string,
+    harborFiles: Record<string, string> | undefined,
+    taskInfo: {
+      id?: string;
+      title?: string;
+      description?: string;
+      requirements?: string[];
+      acceptanceCriteria?: string[];
+      commitSha?: string;
+    },
+  ): string | null {
+    if (!harborFiles || typeof harborFiles !== 'object') {
+      return null;
+    }
+    fs.mkdirSync(targetDir, { recursive: true });
+    fs.mkdirSync(path.join(targetDir, 'environment'), { recursive: true });
+    fs.mkdirSync(path.join(targetDir, 'solution'), { recursive: true });
+    fs.mkdirSync(path.join(targetDir, 'tests'), { recursive: true });
+
+    if (typeof harborFiles.instruction_md === 'string') {
+      fs.writeFileSync(path.join(targetDir, 'instruction.md'), harborFiles.instruction_md, 'utf8');
+    }
+    if (typeof harborFiles.task_toml === 'string') {
+      fs.writeFileSync(path.join(targetDir, 'task.toml'), harborFiles.task_toml, 'utf8');
+    }
+    if (typeof harborFiles.dockerfile === 'string') {
+      fs.writeFileSync(path.join(targetDir, 'environment', 'Dockerfile'), harborFiles.dockerfile, 'utf8');
+    }
+    if (typeof harborFiles.solve_sh === 'string') {
+      fs.writeFileSync(path.join(targetDir, 'solution', 'solve.sh'), harborFiles.solve_sh, 'utf8');
+    }
+    if (typeof harborFiles.test_sh === 'string') {
+      fs.writeFileSync(path.join(targetDir, 'tests', 'test.sh'), harborFiles.test_sh, 'utf8');
+    }
+
+    const packageId = taskInfo.id || path.basename(targetDir);
+    const bundleFile = path.join(this.storagePath, `${packageId}.harbor.json`);
+    const relativeDir = path.relative(this.storagePath, targetDir).replace(/\\/g, '/');
+    const exportBundle = {
+      schema: 'https://harborframework.com/spec/v1.json',
+      package: {
+        id: packageId,
+        title: taskInfo.title,
+        harborSchema: 'v1',
+        harborPath: relativeDir,
+        createdAt: new Date().toISOString(),
+        files: {
+          instruction: 'instruction.md',
+          configuration: 'task.toml',
+          environment: 'environment/Dockerfile',
+          solution: 'solution/solve.sh',
+          verifier: 'tests/test.sh',
+        },
+      },
+      artifacts: harborFiles,
+    };
+    fs.writeFileSync(bundleFile, JSON.stringify(exportBundle, null, 2), 'utf8');
+    return relativeDir;
   }
 
   private toTask(task: TaskEntity) {

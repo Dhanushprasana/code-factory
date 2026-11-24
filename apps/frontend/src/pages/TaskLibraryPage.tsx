@@ -369,6 +369,48 @@ export function TaskLibraryPage() {
                     </div>
                   ))}
                 </div>
+                {task.harborFiles && (
+                  <div className="task-detail-section">
+                    <h3>Harbor Task Package</h3>
+                    {task.harborPackagePath && (
+                      <p className="form-hint" style={{ marginBottom: 8 }}>
+                        Stored in Docker volume: <code>{task.harborPackagePath}</code>
+                      </p>
+                    )}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <details className="reference-artifact">
+                        <summary>instruction.md</summary>
+                        <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 200, overflow: 'auto', fontSize: 12, padding: 8, background: '#f8fafc' }}>
+                          {task.harborFiles.instruction_md}
+                        </pre>
+                      </details>
+                      <details className="reference-artifact">
+                        <summary>task.toml (Harbor v1.4)</summary>
+                        <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 150, overflow: 'auto', fontSize: 12, padding: 8, background: '#f8fafc' }}>
+                          {task.harborFiles.task_toml}
+                        </pre>
+                      </details>
+                      <details className="reference-artifact">
+                        <summary>environment/Dockerfile</summary>
+                        <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 150, overflow: 'auto', fontSize: 12, padding: 8, background: '#f8fafc' }}>
+                          {task.harborFiles.dockerfile}
+                        </pre>
+                      </details>
+                      <details className="reference-artifact">
+                        <summary>solution/solve.sh</summary>
+                        <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 150, overflow: 'auto', fontSize: 12, padding: 8, background: '#f8fafc' }}>
+                          {task.harborFiles.solve_sh}
+                        </pre>
+                      </details>
+                      <details className="reference-artifact">
+                        <summary>tests/test.sh (verifier)</summary>
+                        <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 150, overflow: 'auto', fontSize: 12, padding: 8, background: '#f8fafc' }}>
+                          {task.harborFiles.test_sh}
+                        </pre>
+                      </details>
+                    </div>
+                  </div>
+                )}
                 <div className="task-detail-section">
                   <h3>
                     <History size={15} /> Version history
