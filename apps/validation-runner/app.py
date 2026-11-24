@@ -624,7 +624,12 @@ def evaluate_harbor_task(
         eval_env["OPENROUTER_API_KEY"] = request.api_key
         base_url = "https://openrouter.ai/api/v1"
         model_api_key_name = "OPENROUTER_API_KEY"
-        model_api_format = "openai_chat_completions"
+        # NOTE: do NOT set model_api_format for OpenRouter — Harbor's litellm_model_name()
+        # prepends "openai/" when format is openai_chat_completions, sending traffic to
+        # OpenAI's endpoint instead of OpenRouter. With no format + base_url set,
+        # the model name stays bare (e.g. nvidia/nemotron-3.5-super-vl:free) and aider
+        # routes correctly via LiteLLM using api_base from the model-settings-file.
+        model_api_format = None
         skip_model_parsing = True
         clean_model = request.model_name.removeprefix("openrouter/")
 
