@@ -126,15 +126,20 @@ def _source_chunks(
     report = repository["report"]
     metadata = _file_metadata(report)
     neighbors = _graph_neighbors(report)
-    selected = list(ranked_files[:8])
+    max_ranked = 24 if token_budget >= 20000 else 8
+    max_selected = 40 if token_budget >= 20000 else 12
+    max_symbols_per_file = 6 if token_budget >= 20000 else 3
+    selected = list(ranked_files[:max_ranked])
     selected_paths = {path for path, _, _ in selected}
-    for file_path, _, _ in selected[:4]:
+    for file_path, _, _ in selected[:8]:
         for neighbor in sorted(neighbors.get(file_path, set())):
             if neighbor not in selected_paths:
                 selected.append((neighbor, 0.0, f"related by static dependency to {file_path}"))
                 selected_paths.add(neighbor)
-                if len(selected) >= 12:
+                if len(selected) >= max_selected:
                     break
+        if len(selected) >= max_selected:
+            break
 
     chunks: list[dict[str, Any]] = []
     remaining = token_budget
@@ -156,7 +161,7 @@ def _source_chunks(
             first_symbol_start = max(1, int(symbols[0].get("start_line", 1)))
             if first_symbol_start > 1:
                 ranges.append((1, min(first_symbol_start - 1, 40), "file prologue"))
-            for symbol in symbols[:3]:
+            for symbol in symbols[:max_symbols_per_file]:
                 start = max(1, int(symbol.get("start_line", 1)))
                 end = min(len(lines), int(symbol.get("end_line", start)), start + 159)
                 ranges.append((start, end, str(symbol.get("name", ""))))
