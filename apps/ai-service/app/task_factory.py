@@ -16,7 +16,7 @@ from app.context_engine import build_task_context
 logger = logging.getLogger("ai_service.task_factory")
 
 
-PROMPT_VERSION = "task-factory-harbor-v2"
+PROMPT_VERSION = "task-factory-harbor-v3"
 TASK_CATEGORIES = (
     "feature",
     "bug_fix",
@@ -639,15 +639,16 @@ async def generate_task_suggestions(request: TaskGenerationRequest) -> TaskGener
         "- evidence: array of exact {repository_id, snapshot_id, commit_sha, file_path, start_line, end_line, symbol} from context chunks\n"
         "- harbor_files: Harbor task package file contents:\n"
         "    * instruction_md: Complete Markdown instructions for any autonomous coding agent (objective, requirements, acceptance criteria, constraints, setup). "
-        "Must be strictly grounded in Context Chunks: exact route paths, DTO/request body shapes, enum values, symbol names, and error status codes must match the real codebase (never invent contradictory endpoints or enum values unless explicitly asking to add them). Keep instructions model-agnostic and focused on observable behavior.\n"
+        "Must be strictly grounded in Context Chunks: exact route paths, controller prefixes (never pluralize or rename existing prefixes such as `@Controller('order')` -> `/orders` unless explicitly specified), DTO/request body shapes, enum values, symbol names, and error status codes must match the real codebase. Keep instructions model-agnostic and focused on observable behavior.\n"
         "    * task_toml: Harbor manifest with schema_version = \"1.4\", [task] with org/name format name and description, [verifier] timeout_sec = 600.0 and environment_mode = \"separate\", [agent] timeout_sec = 600.0, [environment] cpus = 2 and memory_mb = 4096.\n"
         "    * dockerfile: Dockerfile to build the repository environment with required system and runtime dependencies (do NOT assume external Postgres/Redis containers exist at runtime).\n"
-        "    * solve_sh: Minimal, clean reference solution bash script (#!/bin/bash\\nset -e\\n...) scoped strictly to affected modules. Must preserve existing auth guards, unrelated modules, and repository conventions while using exact, valid syntax.\n"
+        "    * solve_sh: Minimal, clean reference solution bash script (#!/bin/bash\\nset -e\\n...) scoped strictly to affected modules. "
+        "Must use a workspace-safe directory check (e.g. `[ -d /app/backend ] && cd /app/backend || ([ -d backend ] && cd backend || true)`), edit the real existing module/controller/service files (or register any new controller/provider in its NestJS/app module — NEVER write an unregistered standalone `*.patch.ts` file), and preserve existing auth guards, unrelated modules, and repository conventions while using exact, valid syntax.\n"
         "    * test_sh: Self-contained, solution-agnostic verifier bash script (#!/bin/bash...) that:\n"
         "        1) Always creates /logs/verifier and registers an EXIT trap (`_harbor_cleanup() { [ -f /logs/verifier/reward.txt ] || echo 0 > /logs/verifier/reward.txt; }; trap _harbor_cleanup EXIT`) before `set -e` so reward.txt is always written.\n"
-        "        2) Runs 100% self-contained inside the container without requiring unstarted external DBs/services (prefer the project's test runner, e.g. pytest, jest, or @nestjs/testing + supertest with mocked services/repositories and overridden guards, rather than starting a full DB-backed server).\n"
-        "        3) Verifies ONLY the behavioral contract in instruction_md (never couple tests to solve_sh-only changes, removed guards, or unrequested route renames; accept standard valid/invalid payload shapes and framework status codes where appropriate).\n"
-        "        4) Places any temporary test harness file inside the project root (not /tmp) so imports and tsconfig/module paths resolve cleanly, and writes `1` to /logs/verifier/reward.txt only when all build and behavioral checks pass.\n\n"
+        "        2) Uses the same workspace-safe directory check (`[ -d /app/backend ] && cd /app/backend || ([ -d backend ] && cd backend || true)`), and runs 100% self-contained inside the container without requiring unstarted external DBs/services (prefer the project's test runner, e.g. pytest, jest, or a self-contained `@nestjs/testing` + `supertest` script against the real module with mocked services/repositories and overridden guards, rather than starting a full DB-backed server). When running `jest`/`npm test`, check if spec files exist first or pass `--passWithNoTests` so 0 existing tests do not fail the run.\n"
+        "        3) Verifies ONLY the runtime behavioral contract in instruction_md (NEVER use `grep` to assert `solve_sh`-specific filenames like `*.patch.ts`, class names, or unchanged decorator strings; accept any valid implementation that compiles and satisfies the HTTP/API/functional behavior).\n"
+        "        4) Places any temporary test harness file inside the project root (not /tmp) so imports and tsconfig/module paths resolve cleanly, removes the temporary test file on completion, and writes `1` to /logs/verifier/reward.txt only when all build and behavioral checks pass.\n\n"
         f"Generate at most {request.count} distinct suggestions.\n"
         f"Requested category: {request.category}. Difficulty: {request.difficulty}.\n"
         f"User idea: {request.user_idea or 'Propose useful, narrowly scoped tasks from detected modules, context blueprint, and test gaps.'}.\n"
