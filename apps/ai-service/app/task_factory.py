@@ -595,7 +595,7 @@ async def generate_task_suggestions(request: TaskGenerationRequest) -> TaskGener
         model = _env_setting("OLLAMA_MODEL", "qwen2.5:7b")
         base_url = _env_setting("OLLAMA_BASE_URL", "http://host.docker.internal:11434/v1")
     token_budget = int(os.getenv("TASK_CONTEXT_TOKEN_BUDGET", "50000"))
-    output_token_budget = int(os.getenv("TASK_OUTPUT_TOKEN_BUDGET", "6000"))
+    output_token_budget = int(os.getenv("TASK_OUTPUT_TOKEN_BUDGET", "12000"))
     context, manifest = build_task_context(
         [repository.model_dump() for repository in request.repositories],
         request.user_idea,
