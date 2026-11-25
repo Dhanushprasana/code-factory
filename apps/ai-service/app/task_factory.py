@@ -16,7 +16,7 @@ from app.context_engine import build_task_context
 logger = logging.getLogger("ai_service.task_factory")
 
 
-PROMPT_VERSION = "task-factory-harbor-v7"
+PROMPT_VERSION = "task-factory-harbor-v8"
 TASK_CATEGORIES = (
     "feature",
     "bug_fix",
@@ -627,7 +627,7 @@ async def generate_task_suggestions(request: TaskGenerationRequest) -> TaskGener
         "and evidence references.\n\n"
         f"{context_md_prompt}"
         "Return only a JSON object with a 'tasks' array. Each task must define a small, testable, source-grounded "
-        "coding benchmark problem with complete Harbor Framework (schema_version = \"1.4\") package artifacts:\n"
+        "coding benchmark problem (never propose a feature or validation that is already implemented in Context Chunks) with complete Harbor Framework (schema_version = \"1.4\") package artifacts:\n"
         "- title: specific concise title (8-160 chars)\n"
         "- description: thorough problem description and expected behavior (30-3000 chars)\n"
         "- category: one of 'feature', 'bug_fix', 'api_enhancement', 'refactoring', 'database_change', 'performance', 'test_improvement'\n"
@@ -647,7 +647,7 @@ async def generate_task_suggestions(request: TaskGenerationRequest) -> TaskGener
         "Edit the real existing module/controller/service files (NEVER overwrite existing enums/DTOs/controllers with `cat << 'EOF' > ...` and drop existing members/imports — only use `cat >` for genuinely new files, and edit existing files with `node << 'EOF' ... EOF` using plain string methods `indexOf`/`slice`/`includes` without `/regex/` literals, checking if an import symbol like `Param` is already imported before adding it). Never use `cat >>` after a class's closing `}` or `node -e \"...\"` / `python3 -c \"...\"`, and preserve existing auth guards, unrelated modules, and repository conventions.\n"
         "    * test_sh: Self-contained, solution-agnostic verifier bash script (#!/bin/bash...) that:\n"
         "        1) Always creates /logs/verifier and registers an EXIT trap (`_harbor_cleanup() { [ -f /logs/verifier/reward.txt ] || echo 0 > /logs/verifier/reward.txt; }; trap _harbor_cleanup EXIT`) BEFORE `set -e` so reward.txt is always written.\n"
-        "        2) Uses the same workspace-safe directory check (`[ -d /app/backend ] && cd /app/backend || ([ -d backend ] && cd backend || true)`) and uses paths relative to that directory (`src/...`, NEVER `/app/backend/...` or `backend/...` after `cd`). Runs 100% self-contained inside the container without requiring unstarted external DBs/services. When running `jest`, run `npx jest src/verify-task.spec.ts --passWithNoTests --forceExit` using the project's existing `package.json` Jest config (NEVER pass `--config '{...}'` which strips `moduleNameMapper` like `@app/*`).\n"
+        "        2) Uses the same workspace-safe directory check (`[ -d /app/backend ] && cd /app/backend || ([ -d backend ] && cd backend || true)`) and uses paths relative to that directory (`src/...`, NEVER `/app/backend/...` or `backend/...` after `cd`). Runs 100% self-contained inside the container without requiring unstarted external DBs/services. When running `jest`, run `npx jest src/verify-task.spec.ts --passWithNoTests --forceExit` using the project's existing `package.json` Jest config, and if `tsconfig.json` `paths` or `package.json` `_moduleAliases` uses `@app/*` without `moduleNameMapper` in `package.json`, pass `--moduleNameMapper '{\"^@app/(.*)$\":\"<rootDir>/$1\"}'` (NEVER pass `--config '{...}'` which drops `package.json` Jest settings).\n"
         "        3) Verifies ONLY the runtime behavioral contract in instruction_md: for NestJS/HTTP endpoints, boot a `NestApplication` (`const app = module.createNestApplication(); await app.init();`) with the real Controller + Service and mock at the repository/DB boundary (`getRepositoryToken(Entity)`) + `overrideGuard(...)` (NEVER mock or assert `service.<methodName>()` or `controller.<methodName>()` directly, and NEVER use `grep` to assert `solve_sh`-specific filenames, class names, or method names), then send real HTTP requests using `supertest` (`request(app.getHttpServer()).get(...)` / `.patch(...)`).\n"
         "        4) Places any temporary `.spec.ts` test harness file inside `src/` (e.g. `src/verify-task.spec.ts`, not `/tmp` or repo root, so Jest `rootDir: \"src\"` and tsconfig paths resolve cleanly), removes the temporary test file on completion, and writes `1` to /logs/verifier/reward.txt only when all build and behavioral checks pass.\n\n"
         f"Generate at most {request.count} distinct suggestions.\n"
