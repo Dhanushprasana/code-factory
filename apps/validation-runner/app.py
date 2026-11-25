@@ -634,7 +634,17 @@ def evaluate_harbor_task(
     model_api_format = None
     skip_model_parsing = False
 
-    if harness in ("anthropic", "claude") or "claude" in request.model_name.lower():
+    is_openrouter = harness == "openrouter" or api_key.startswith("sk-or-") or request.model_name.startswith("openrouter/")
+
+    if is_openrouter:
+        eval_env["OPENROUTER_API_KEY"] = api_key
+        base_url = None
+        model_api_key_name = "OPENROUTER_API_KEY"
+        model_api_format = None
+        skip_model_parsing = False
+        bare_model = request.model_name.removeprefix("openrouter/")
+        clean_model = f"openrouter/{bare_model}" if agent_name == "aider" else bare_model
+    elif harness in ("anthropic", "claude") or "claude" in request.model_name.lower():
         eval_env["ANTHROPIC_API_KEY"] = api_key
         model_api_key_name = "ANTHROPIC_API_KEY"
         clean_model = request.model_name.removeprefix("anthropic/")
