@@ -16,7 +16,7 @@ from app.context_engine import build_task_context
 logger = logging.getLogger("ai_service.task_factory")
 
 
-PROMPT_VERSION = "task-factory-harbor-v1"
+PROMPT_VERSION = "task-factory-harbor-v2"
 TASK_CATEGORIES = (
     "feature",
     "bug_fix",
@@ -638,11 +638,16 @@ async def generate_task_suggestions(request: TaskGenerationRequest) -> TaskGener
         "- affected_modules: array of module paths exactly from the provided context\n"
         "- evidence: array of exact {repository_id, snapshot_id, commit_sha, file_path, start_line, end_line, symbol} from context chunks\n"
         "- harbor_files: Harbor task package file contents:\n"
-        "    * instruction_md: The complete Markdown instructions given to the autonomous coding agent (objective, requirements, acceptance criteria, setup instructions).\n"
-        "    * task_toml: Harbor manifest with schema_version = \"1.4\", [task] with name and description, [verifier] timeout_sec = 600.0 and environment_mode = \"separate\", [agent] timeout_sec = 600.0, [environment] cpus = 2 and memory_mb = 4096.\n"
-        "    * dockerfile: Dockerfile to build the repository environment with required system and runtime dependencies.\n"
-        "    * solve_sh: Reference solution bash script (#!/bin/bash\\nset -e\\n...) that applies the golden fix/solution. Must use exact, valid syntax matching the repository's architecture (e.g. controllers delegate to services, injected members must exist, validation pipes and enum checks are enabled to return HTTP 400 on invalid input, and empty collection parameters are handled without SQL errors).\n"
-        "    * test_sh: Verifier bash script (#!/bin/bash\\n...) that executes tests in sandbox and writes 1 (pass) or 0 (fail) to /logs/verifier/reward.txt.\n\n"
+        "    * instruction_md: Complete Markdown instructions for any autonomous coding agent (objective, requirements, acceptance criteria, constraints, setup). "
+        "Must be strictly grounded in Context Chunks: exact route paths, DTO/request body shapes, enum values, symbol names, and error status codes must match the real codebase (never invent contradictory endpoints or enum values unless explicitly asking to add them). Keep instructions model-agnostic and focused on observable behavior.\n"
+        "    * task_toml: Harbor manifest with schema_version = \"1.4\", [task] with org/name format name and description, [verifier] timeout_sec = 600.0 and environment_mode = \"separate\", [agent] timeout_sec = 600.0, [environment] cpus = 2 and memory_mb = 4096.\n"
+        "    * dockerfile: Dockerfile to build the repository environment with required system and runtime dependencies (do NOT assume external Postgres/Redis containers exist at runtime).\n"
+        "    * solve_sh: Minimal, clean reference solution bash script (#!/bin/bash\\nset -e\\n...) scoped strictly to affected modules. Must preserve existing auth guards, unrelated modules, and repository conventions while using exact, valid syntax.\n"
+        "    * test_sh: Self-contained, solution-agnostic verifier bash script (#!/bin/bash...) that:\n"
+        "        1) Always creates /logs/verifier and registers an EXIT trap (`_harbor_cleanup() { [ -f /logs/verifier/reward.txt ] || echo 0 > /logs/verifier/reward.txt; }; trap _harbor_cleanup EXIT`) before `set -e` so reward.txt is always written.\n"
+        "        2) Runs 100% self-contained inside the container without requiring unstarted external DBs/services (prefer the project's test runner, e.g. pytest, jest, or @nestjs/testing + supertest with mocked services/repositories and overridden guards, rather than starting a full DB-backed server).\n"
+        "        3) Verifies ONLY the behavioral contract in instruction_md (never couple tests to solve_sh-only changes, removed guards, or unrequested route renames; accept standard valid/invalid payload shapes and framework status codes where appropriate).\n"
+        "        4) Places any temporary test harness file inside the project root (not /tmp) so imports and tsconfig/module paths resolve cleanly, and writes `1` to /logs/verifier/reward.txt only when all build and behavioral checks pass.\n\n"
         f"Generate at most {request.count} distinct suggestions.\n"
         f"Requested category: {request.category}. Difficulty: {request.difficulty}.\n"
         f"User idea: {request.user_idea or 'Propose useful, narrowly scoped tasks from detected modules, context blueprint, and test gaps.'}.\n"
