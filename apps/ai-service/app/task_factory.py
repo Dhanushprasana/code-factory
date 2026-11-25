@@ -16,7 +16,7 @@ from app.context_engine import build_task_context
 logger = logging.getLogger("ai_service.task_factory")
 
 
-PROMPT_VERSION = "task-factory-harbor-v6"
+PROMPT_VERSION = "task-factory-harbor-v7"
 TASK_CATEGORIES = (
     "feature",
     "bug_fix",
@@ -594,7 +594,7 @@ async def generate_task_suggestions(request: TaskGenerationRequest) -> TaskGener
         api_key = None
         model = _env_setting("OLLAMA_MODEL", "qwen2.5:7b")
         base_url = _env_setting("OLLAMA_BASE_URL", "http://host.docker.internal:11434/v1")
-    token_budget = int(os.getenv("TASK_CONTEXT_TOKEN_BUDGET", "10000"))
+    token_budget = int(os.getenv("TASK_CONTEXT_TOKEN_BUDGET", "20000"))
     output_token_budget = int(os.getenv("TASK_OUTPUT_TOKEN_BUDGET", "6000"))
     context, manifest = build_task_context(
         [repository.model_dump() for repository in request.repositories],
@@ -639,15 +639,15 @@ async def generate_task_suggestions(request: TaskGenerationRequest) -> TaskGener
         "- evidence: array of exact {repository_id, snapshot_id, commit_sha, file_path, start_line, end_line, symbol} from context chunks\n"
         "- harbor_files: Harbor task package file contents:\n"
         "    * instruction_md: Complete Markdown instructions for any autonomous coding agent (objective, requirements, acceptance criteria, constraints, setup). "
-        "Must be strictly grounded in Context Chunks: exact route paths, controller prefixes (never pluralize or rename existing prefixes such as `@Controller('order')` -> `/orders` unless explicitly specified), DTO/request body shapes, enum values, symbol names, and error status codes must match the real codebase. Keep instructions model-agnostic and focused on observable behavior.\n"
+        "Must be strictly grounded in Context Chunks: ONLY target files, endpoints, DTOs, and enums whose actual code appears in Context Chunks (never guess unseen enum values, route prefixes, or claim an existing file/enum is missing when you haven't seen it; never pluralize or rename existing prefixes such as `@Controller('order')` -> `/orders`). Keep instructions model-agnostic and focused on observable behavior.\n"
         "    * task_toml: Harbor manifest with schema_version = \"1.4\", [task] with org/name format name and description, [verifier] timeout_sec = 600.0 and environment_mode = \"separate\", [agent] timeout_sec = 600.0, [environment] cpus = 2 and memory_mb = 4096.\n"
         "    * dockerfile: Dockerfile to build the repository environment with required system and runtime dependencies (do NOT assume external Postgres/Redis containers exist at runtime).\n"
         "    * solve_sh: Minimal, clean reference solution bash script (#!/bin/bash\\nset -e\\n...) scoped strictly to affected modules. "
         "Must use a workspace-safe directory check (e.g. `[ -d /app/backend ] && cd /app/backend || ([ -d backend ] && cd backend || true)`) and then use paths relative to that directory (e.g. `src/order/...`, NEVER `backend/src/...` after `cd`ing into `backend`). "
-        "Edit the real existing module/controller/service files (or register any new controller/provider in its NestJS/app module — NEVER write an unregistered standalone `*.patch.ts` file), NEVER use `cat >>` to append methods after a TypeScript class's closing `}`, and NEVER use `node -e \"...\"` or `python3 -c \"...\"` (which breaks on backticks/quotes in bash) — instead use a single-quoted heredoc (`node << 'EOF' ... EOF`) with plain string methods (`indexOf`/`slice`/`includes` — avoid `/regex/` literals and always check if an import symbol like `Param` is already imported before adding it) or `cat << 'EOF' > ...` while preserving existing auth guards, unrelated modules, and repository conventions.\n"
+        "Edit the real existing module/controller/service files (NEVER overwrite existing enums/DTOs/controllers with `cat << 'EOF' > ...` and drop existing members/imports — only use `cat >` for genuinely new files, and edit existing files with `node << 'EOF' ... EOF` using plain string methods `indexOf`/`slice`/`includes` without `/regex/` literals, checking if an import symbol like `Param` is already imported before adding it). Never use `cat >>` after a class's closing `}` or `node -e \"...\"` / `python3 -c \"...\"`, and preserve existing auth guards, unrelated modules, and repository conventions.\n"
         "    * test_sh: Self-contained, solution-agnostic verifier bash script (#!/bin/bash...) that:\n"
         "        1) Always creates /logs/verifier and registers an EXIT trap (`_harbor_cleanup() { [ -f /logs/verifier/reward.txt ] || echo 0 > /logs/verifier/reward.txt; }; trap _harbor_cleanup EXIT`) BEFORE `set -e` so reward.txt is always written.\n"
-        "        2) Uses the same workspace-safe directory check (`[ -d /app/backend ] && cd /app/backend || ([ -d backend ] && cd backend || true)`) and uses paths relative to that directory (`src/...`, NEVER `/app/backend/...` or `backend/...` after `cd`). Runs 100% self-contained inside the container without requiring unstarted external DBs/services. When running `jest`/`npm test`, check if spec files exist first or pass `--passWithNoTests` so 0 existing tests do not fail the run.\n"
+        "        2) Uses the same workspace-safe directory check (`[ -d /app/backend ] && cd /app/backend || ([ -d backend ] && cd backend || true)`) and uses paths relative to that directory (`src/...`, NEVER `/app/backend/...` or `backend/...` after `cd`). Runs 100% self-contained inside the container without requiring unstarted external DBs/services. When running `jest`, run `npx jest src/verify-task.spec.ts --passWithNoTests --forceExit` using the project's existing `package.json` Jest config (NEVER pass `--config '{...}'` which strips `moduleNameMapper` like `@app/*`).\n"
         "        3) Verifies ONLY the runtime behavioral contract in instruction_md: for NestJS/HTTP endpoints, boot a `NestApplication` (`const app = module.createNestApplication(); await app.init();`) with the real Controller + Service and mock at the repository/DB boundary (`getRepositoryToken(Entity)`) + `overrideGuard(...)` (NEVER mock or assert `service.<methodName>()` or `controller.<methodName>()` directly, and NEVER use `grep` to assert `solve_sh`-specific filenames, class names, or method names), then send real HTTP requests using `supertest` (`request(app.getHttpServer()).get(...)` / `.patch(...)`).\n"
         "        4) Places any temporary `.spec.ts` test harness file inside `src/` (e.g. `src/verify-task.spec.ts`, not `/tmp` or repo root, so Jest `rootDir: \"src\"` and tsconfig paths resolve cleanly), removes the temporary test file on completion, and writes `1` to /logs/verifier/reward.txt only when all build and behavioral checks pass.\n\n"
         f"Generate at most {request.count} distinct suggestions.\n"
