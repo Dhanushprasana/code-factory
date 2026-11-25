@@ -224,18 +224,28 @@ export class TasksService {
       ) {
         throw new BadGatewayException('AI service returned an invalid task-generation response.');
       }
+
+      // Run Gate 4 (solve.sh + build) and Gate 5 (test.sh) with targeted repair loop before returning
+      const primaryRepo = repositories[0] as Record<string, unknown> | undefined;
+      const verifiedTasks = await this.verifyAndRepairCandidates(
+        serviceUrl,
+        validated.provider,
+        primaryRepo,
+        result.tasks,
+      );
+
       generation.status = 'completed';
       generation.provider = result.provider;
       generation.model = result.model;
       generation.promptVersion = result.prompt_version;
       generation.contextManifest = result.context_manifest;
-      generation.candidates = result.tasks;
+      generation.candidates = verifiedTasks;
       await this.generations.save(generation);
 
       // Store draft Harbor package files in Docker volume
       try {
         const draftsDir = path.join(this.storagePath, 'harbor-packages', 'drafts', generation.id);
-        result.tasks.forEach((candidate, idx) => {
+        verifiedTasks.forEach((candidate, idx) => {
           const harbor = (candidate as any).harbor_files as Record<string, string> | undefined;
           if (harbor) {
             this.writeHarborPackageFiles(path.join(draftsDir, `candidate-${idx}`), harbor, {
@@ -249,7 +259,7 @@ export class TasksService {
         this.logger.warn(`Could not write draft Harbor files to volume: ${volumeError instanceof Error ? volumeError.message : volumeError}`);
       }
 
-      return { ...generation, candidates: result.tasks };
+      return { ...generation, candidates: verifiedTasks };
     } catch (error) {
       if (generation.status === 'running') {
         generation.status = 'failed';
@@ -1062,6 +1072,193 @@ export class TasksService {
       throw new NotFoundException('Project was not found.');
     }
     return project;
+  }
+
+  private async verifyAndRepairCandidates(
+    serviceUrl: string,
+    provider: string,
+    primaryRepo: Record<string, unknown> | undefined,
+    candidates: Record<string, unknown>[],
+  ): Promise<Record<string, unknown>[]> {
+    const repoPath = typeof primaryRepo?.repository_path === 'string' ? primaryRepo.repository_path : null;
+    if (!repoPath || !fs.existsSync(repoPath)) {
+      return candidates;
+    }
+
+    const updated: Record<string, unknown>[] = [];
+    for (const rawCandidate of candidates) {
+      let candidate: Record<string, any> = { ...rawCandidate };
+      const maxRepairs = 2;
+      let repairs = Number(candidate.repair_attempts ?? 0);
+
+      for (let attempt = 0; attempt <= maxRepairs; attempt++) {
+        const harbor = candidate.harbor_files as { solve_sh?: string; test_sh?: string } | undefined;
+        if (!harbor?.solve_sh || !harbor?.test_sh) break;
+
+        const execRes = await this.executeCandidateVerification(repoPath, harbor.solve_sh, harbor.test_sh);
+        const gates = Array.isArray(candidate.validation_gates) ? [...candidate.validation_gates] : [];
+        const upsertGate = (gateName: string, passed: boolean, summary: string, err?: string) => {
+          const idx = gates.findIndex((g: any) => g.gate === gateName);
+          const entry = {
+            gate: gateName,
+            passed,
+            summary,
+            errors: err ? [err.slice(-1500)] : [],
+            warnings: [],
+          };
+          if (idx >= 0) gates[idx] = entry;
+          else gates.push(entry);
+        };
+
+        if (execRes.solveResult.exitCode !== 0) {
+          upsertGate(
+            'gate_4_reference_build',
+            false,
+            `solve.sh failed with exit code ${execRes.solveResult.exitCode}.`,
+            execRes.solveResult.output,
+          );
+          upsertGate('gate_5_verifier_against_reference', false, 'Skipped because solve.sh failed.');
+          candidate.validation_gates = gates;
+          candidate.lifecycle_status = 'NEEDS_REVIEW';
+
+          if (attempt < maxRepairs && candidate.package_ir && primaryRepo) {
+            const repaired = await this.callAiRepair(
+              serviceUrl,
+              provider,
+              'reference_solution',
+              [execRes.solveResult.output],
+              candidate.package_ir,
+              primaryRepo,
+            );
+            if (repaired) {
+              repairs += 1;
+              candidate = { ...candidate, ...repaired, repair_attempts: repairs };
+              continue;
+            }
+          }
+          break;
+        }
+
+        upsertGate('gate_4_reference_build', true, 'solve.sh applied and built cleanly.');
+        const testPassed = execRes.testResult && execRes.testResult.exitCode === 0 && execRes.reward >= 1;
+        if (!testPassed) {
+          const errOut = execRes.testResult?.output || `Verification reward was ${execRes.reward}`;
+          upsertGate(
+            'gate_5_verifier_against_reference',
+            false,
+            `test.sh failed (exit=${execRes.testResult?.exitCode ?? 'n/a'}, reward=${execRes.reward}).`,
+            errOut,
+          );
+          candidate.validation_gates = gates;
+          candidate.lifecycle_status = 'NEEDS_REVIEW';
+
+          if (attempt < maxRepairs && candidate.package_ir && primaryRepo) {
+            const repaired = await this.callAiRepair(
+              serviceUrl,
+              provider,
+              'test_generation',
+              [errOut],
+              candidate.package_ir,
+              primaryRepo,
+            );
+            if (repaired) {
+              repairs += 1;
+              candidate = { ...candidate, ...repaired, repair_attempts: repairs };
+              continue;
+            }
+          }
+          break;
+        }
+
+        upsertGate('gate_5_verifier_against_reference', true, 'test.sh passed against reference solution (reward=1).');
+        candidate.validation_gates = gates;
+        candidate.lifecycle_status = gates.every((g: any) => g.passed) ? 'READY' : 'NEEDS_REVIEW';
+        break;
+      }
+
+      updated.push(candidate);
+    }
+    return updated;
+  }
+
+  private async executeCandidateVerification(
+    snapshotPath: string,
+    solveSh: string,
+    testSh: string,
+  ) {
+    const runId = randomUUID();
+    const verificationRoot = path.join(this.storagePath, 'harbor-verifications', 'draft-verify', runId);
+    const workspaceDir = path.join(verificationRoot, 'workspace');
+    await fs.promises.mkdir(workspaceDir, { recursive: true });
+    this.cleanupBackgroundProcesses();
+
+    try {
+      await fs.promises.cp(snapshotPath, workspaceDir, {
+        recursive: true,
+        filter: (src) => this.shouldCopySnapshotEntry(src),
+      });
+      await this.symlinkOrPrepareDependencies(snapshotPath, workspaceDir);
+      this.ensureSkipLibCheck(workspaceDir);
+      this.patchPackageJsonForDistMain(workspaceDir);
+
+      try {
+        fs.mkdirSync(path.join(workspaceDir, 'logs', 'verifier'), { recursive: true });
+        if (process.platform === 'linux') {
+          fs.mkdirSync('/logs/verifier', { recursive: true });
+        }
+      } catch {}
+
+      const solveResult = await this.executeScript(solveSh, workspaceDir, 'solve.sh');
+      if (solveResult.exitCode !== 0) {
+        return { solveResult, testResult: null, reward: 0 };
+      }
+      const testResult = await this.executeScript(testSh, workspaceDir, 'test.sh');
+      let reward = testResult.exitCode === 0 ? 1 : 0;
+      for (const rf of [
+        path.join(workspaceDir, 'logs', 'verifier', 'reward.txt'),
+        '/logs/verifier/reward.txt',
+      ]) {
+        if (fs.existsSync(rf)) {
+          const parsed = parseFloat(fs.readFileSync(rf, 'utf8').trim());
+          if (!isNaN(parsed)) {
+            reward = parsed;
+            break;
+          }
+        }
+      }
+      return { solveResult, testResult, reward };
+    } finally {
+      this.cleanupBackgroundProcesses();
+      await fs.promises.rm(verificationRoot, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
+  private async callAiRepair(
+    serviceUrl: string,
+    provider: string,
+    stage: 'reference_solution' | 'test_generation',
+    errors: string[],
+    packageIr: unknown,
+    repository: Record<string, unknown>,
+  ): Promise<Record<string, unknown> | null> {
+    try {
+      const resp = await fetch(`${serviceUrl}/api/v1/tasks/repair`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          provider,
+          stage,
+          errors,
+          package_ir: packageIr,
+          repository,
+        }),
+        signal: AbortSignal.timeout(120_000),
+      });
+      if (!resp.ok) return null;
+      return (await resp.json()) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
   }
 
   private assertStoragePath(checkoutPath: string) {

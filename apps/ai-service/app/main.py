@@ -11,7 +11,9 @@ from app.analyzers.repository_analyzer import (
 from app.task_factory import (
     TaskGenerationRequest,
     TaskGenerationResponse,
+    TaskRepairRequest,
     generate_task_suggestions,
+    repair_task_package,
 )
 from app.reference_factory import (
     ReferenceGenerationRequest,
@@ -117,6 +119,11 @@ async def suggest_tasks(request: TaskGenerationRequest) -> TaskGenerationRespons
                     detail="A task context path is outside the configured repository scan root.",
                 ) from error
     return await generate_task_suggestions(request)
+
+
+@app.post("/api/v1/tasks/repair")
+async def repair_task(request: TaskRepairRequest) -> dict:
+    return await repair_task_package(request)
 
 
 @app.post("/api/v1/references/generate")

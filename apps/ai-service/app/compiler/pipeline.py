@@ -255,3 +255,67 @@ async def compile_single_task_package(
     ir.validation_gates = gates
     ir.repair_attempts = total_repairs
     return CompiledTaskResult(ir=ir, harbor_package=harbor_pkg)
+
+
+async def repair_compiled_package(
+    llm_call: LLMCaller,
+    provider: str,
+    default_model: str,
+    package_ir_dict: dict[str, Any],
+    repository_input: dict[str, Any],
+    failing_stage: str,
+    errors: list[str],
+    stage_models: StageModelConfig | None = None,
+) -> CompiledTaskResult:
+    ir = TaskPackageIR.model_validate(package_ir_dict)
+    ground_truth: RepositoryGroundTruth = inspect_repository_snapshot(
+        repository_input.get("repository_path"),
+        context_repo=None,
+    )
+    repair_model = resolve_stage_model("repair", default_model, stage_models)
+    design = TaskDesignOutput(
+        title=ir.metadata.title,
+        description=ir.metadata.description,
+        category=ir.metadata.category,
+        difficulty=ir.metadata.difficulty,
+        specification=ir.specification,
+        grounding=ir.grounding,
+    )
+    plan = ReferencePlanOutput(
+        files_to_modify=[c.path for c in ir.reference_solution.changes if c.operation == "modify"],
+        new_files_required=[c.path for c in ir.reference_solution.changes if c.operation == "create"],
+        implementation_sequence=["Repair failing component without altering approved task contract."],
+    )
+
+    if failing_stage == "reference_solution":
+        ir.reference_solution = await repair_reference_solution(
+            llm_call=llm_call,
+            model=repair_model,
+            design=design,
+            previous=ir.reference_solution,
+            errors=errors,
+            ground_truth=ground_truth,
+        )
+    elif failing_stage == "test_generation":
+        ir.verification = await repair_test_specification(
+            llm_call=llm_call,
+            model=repair_model,
+            design=design,
+            previous=ir.verification,
+            errors=errors,
+            ground_truth=ground_truth,
+        )
+
+    ir.repair_attempts += 1
+    harbor_pkg = compile_harbor_package(ir, ground_truth)
+    lifecycle_status, gates = run_all_validation_gates(
+        ir=ir,
+        design=design,
+        plan=plan,
+        pkg=harbor_pkg,
+        ground_truth=ground_truth,
+        execute_runtime=False,
+    )
+    ir.lifecycle_status = lifecycle_status
+    ir.validation_gates = gates
+    return CompiledTaskResult(ir=ir, harbor_package=harbor_pkg)

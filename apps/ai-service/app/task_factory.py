@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from app.context_engine import build_task_context
 from app.compiler.ir import StageModelConfig
-from app.compiler.pipeline import compile_single_task_package
+from app.compiler.pipeline import compile_single_task_package, repair_compiled_package
 
 logger = logging.getLogger("ai_service.task_factory")
 
@@ -727,3 +727,63 @@ async def generate_task_suggestions(request: TaskGenerationRequest) -> TaskGener
         tasks=compiled_tasks,
         context_manifest=manifest,
     )
+
+
+class TaskRepairRequest(BaseModel):
+    provider: Literal["openrouter", "ollama"]
+    stage: Literal["reference_solution", "test_generation"]
+    errors: list[str] = Field(min_length=1)
+    package_ir: dict[str, Any]
+    repository: RepositoryContextInput
+    stage_models: StageModelConfig | None = None
+
+
+async def repair_task_package(request: TaskRepairRequest) -> dict[str, Any]:
+    if request.provider == "openrouter":
+        api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+        if not api_key:
+            raise HTTPException(status_code=503, detail="OpenRouter requires OPENROUTER_API_KEY.")
+        model = _env_setting("OPENROUTER_MODEL", "nvidia/nemotron-3.5-super-vl:free")
+        base_url = _env_setting("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+    else:
+        api_key = None
+        model = _env_setting("OLLAMA_MODEL", "qwen2.5:7b")
+        base_url = _env_setting("OLLAMA_BASE_URL", "http://host.docker.internal:11434/v1")
+
+    output_token_budget = int(os.getenv("TASK_OUTPUT_TOKEN_BUDGET", "12000"))
+
+    async def _llm_call(
+        stage_model: str,
+        stage_prompt: str,
+        _stage_name: str,
+        stage_max_tokens: int,
+        schema: dict[str, Any],
+    ) -> str:
+        return await _request_chat_completions(
+            request.provider,
+            base_url,
+            stage_model,
+            stage_prompt,
+            max(stage_max_tokens, min(output_token_budget, stage_max_tokens)),
+            api_key,
+            schema,
+        )
+
+    compiled = await repair_compiled_package(
+        llm_call=_llm_call,
+        provider=request.provider,
+        default_model=model,
+        package_ir_dict=request.package_ir,
+        repository_input=request.repository.model_dump(),
+        failing_stage=request.stage,
+        errors=request.errors,
+        stage_models=request.stage_models,
+    )
+    ir = compiled.ir
+    return {
+        "harbor_files": compiled.harbor_package.to_harbor_files_dict(),
+        "package_ir": ir.model_dump(mode="json"),
+        "lifecycle_status": ir.lifecycle_status.value,
+        "validation_gates": [g.model_dump(mode="json") for g in ir.validation_gates],
+        "repair_attempts": ir.repair_attempts,
+    }
