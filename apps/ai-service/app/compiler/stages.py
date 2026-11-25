@@ -188,7 +188,7 @@ async def run_stage_reference_solution(
         "Stage C — Reference Solution Generation.\n"
         "Produce structured file changes implementing the approved task contract and plan.\n"
         "Rules:\n"
-        "1. For operation='modify', provide the COMPLETE, valid updated file content (preserving all existing imports, guards, methods, and unrelated functionality).\n"
+        "1. For operation='modify', copy the EXACT baseline file content from Baseline Source Files and ONLY insert/update the minimal lines required — NEVER rewrite the file from memory, NEVER change existing import paths (e.g. keep '@app/user/guards/auth.guard' and './enities/product-stock.entity'), and NEVER delete any existing methods (like findManyByIds) or decorators!\n"
         "2. For operation='create', provide the complete new file content and add module registrations if creating a controller/service.\n"
         "3. NEVER invent *.patch.ts files or alter the task's acceptance criteria.\n"
         "4. If TypeORM 0.2.x is used, NEVER call findOneBy() or findBy() — use findOne() or find().\n"

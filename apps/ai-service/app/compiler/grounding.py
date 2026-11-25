@@ -338,6 +338,60 @@ def validate_reference_solution(
                     f"{change.path} uses TypeORM 0.3 findOneBy/findBy, which does not exist in TypeORM 0.2.x (use findOne/find instead)."
                 )
 
+            # Verify every relative or @app/ import resolves to a real file in snapshot or created files
+            created_paths = {
+                (f"{ground_truth.working_dir}/{c.path}" if ground_truth.working_dir != "." and not c.path.startswith(f"{ground_truth.working_dir}/") else c.path)
+                for c in solution.changes
+            }
+            full_change_path = (
+                f"{ground_truth.working_dir}/{change.path}"
+                if ground_truth.working_dir != "." and not change.path.startswith(f"{ground_truth.working_dir}/")
+                else change.path
+            )
+            change_dir = PurePosixPath(full_change_path).parent
+            for imp_m in re.finditer(r"from\s+['\"]([^'\"]+)['\"]", change.content):
+                imp_target = imp_m.group(1)
+                resolved_base: str | None = None
+                if imp_target.startswith("@app/"):
+                    sub = imp_target[len("@app/") :]
+                    prefix = f"{ground_truth.working_dir}/src/" if ground_truth.working_dir != "." else "src/"
+                    resolved_base = f"{prefix}{sub}"
+                elif imp_target.startswith("."):
+                    parts = list(change_dir.parts)
+                    for seg in PurePosixPath(imp_target).parts:
+                        if seg == ".":
+                            continue
+                        elif seg == "..":
+                            if parts:
+                                parts.pop()
+                        else:
+                            parts.append(seg)
+                    resolved_base = "/".join(parts)
+                if resolved_base and ground_truth.files:
+                    candidates = (
+                        resolved_base,
+                        f"{resolved_base}.ts",
+                        f"{resolved_base}.tsx",
+                        f"{resolved_base}/index.ts",
+                    )
+                    if not any(cand in ground_truth.files or cand in created_paths for cand in candidates):
+                        errors.append(
+                            f"{change.path} imports '{imp_target}' (resolved '{resolved_base}.ts'), which does not exist in the repository."
+                        )
+
+            # For modify operations, ensure existing baseline methods & imports are not accidentally dropped
+            if change.operation == "modify":
+                baseline_text = ground_truth.read_text(full_change_path)
+                if baseline_text:
+                    baseline_methods = set(
+                        re.findall(r"^\s*(?:async\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\s*\(", baseline_text, re.M)
+                    ) - {"if", "for", "while", "switch", "catch", "constructor"}
+                    missing_methods = [m for m in sorted(baseline_methods) if not re.search(rf"\b{re.escape(m)}\s*\(", change.content)]
+                    if missing_methods:
+                        errors.append(
+                            f"{change.path} dropped existing baseline method(s): {', '.join(missing_methods)}. Preserve all existing methods."
+                        )
+
     # Check if new controllers/services are registered when created
     created_ts = [c.path for c in solution.changes if c.operation == "create" and c.path.endswith(".ts")]
     for new_file in created_ts:

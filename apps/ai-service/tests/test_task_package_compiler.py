@@ -263,6 +263,32 @@ def test_reference_solution_validator_rejects_typeorm03_findOneBy(tmp_path: Path
     assert any("findOneBy" in e for e in res.errors)
 
 
+def test_reference_solution_validator_rejects_dropped_methods_and_bad_imports(tmp_path: Path):
+    _create_sample_nest_repo(tmp_path)
+    gt = inspect_repository_snapshot(tmp_path)
+    plan = ReferencePlanOutput(
+        files_to_modify=["backend/src/order/order.service.ts"],
+        implementation_sequence=["Modify OrderService"],
+    )
+    bad_sol = ReferenceSolutionIR(
+        changes=[
+            FileChangeIR(
+                path="backend/src/order/order.service.ts",
+                operation="modify",
+                purpose="Rewrote service dropping findOne and using bad import",
+                content=(
+                    "import { AuthGuard } from '../auth/auth.guard';\n"
+                    "export class OrderService { async newMethod() { return []; } }\n"
+                ),
+            )
+        ]
+    )
+    res = validate_reference_solution(bad_sol, plan, gt)
+    assert not res.passed
+    assert any("../auth/auth.guard" in e for e in res.errors)
+    assert any("findOne" in e for e in res.errors)
+
+
 def test_deterministic_harbor_compiler_and_gates(tmp_path: Path):
     _create_sample_nest_repo(tmp_path)
     gt = inspect_repository_snapshot(tmp_path)
