@@ -141,6 +141,30 @@ def _source_chunks(
         if len(selected) >= max_selected:
             break
 
+    # Include same-module sibling controllers/services/modules/enums so the LLM sees exact routes and DI
+    if token_budget >= 20000 and len(selected) < max_selected:
+        selected_dirs = {
+            str(PurePosixPath(path).parent)
+            for path, _, _ in selected[:8]
+        }
+        module_roots = set()
+        for d in selected_dirs:
+            parts = PurePosixPath(d).parts
+            if parts and parts[-1] in {"dto", "entities", "enums", "guards", "decorators"} and len(parts) > 1:
+                module_roots.add("/".join(parts[:-1]))
+            else:
+                module_roots.add(d)
+        for file_path, _, _ in ranked_files:
+            if len(selected) >= max_selected:
+                break
+            if file_path in selected_paths:
+                continue
+            if any(file_path.startswith(root_dir + "/") for root_dir in module_roots):
+                lower = file_path.lower()
+                if any(k in lower for k in ("controller", "service", "module", "enum", "dto", "entity")):
+                    selected.append((file_path, 0.0, "same-module sibling for complete route/DI context"))
+                    selected_paths.add(file_path)
+
     chunks: list[dict[str, Any]] = []
     remaining = token_budget
     for file_path, _, reason in selected:
