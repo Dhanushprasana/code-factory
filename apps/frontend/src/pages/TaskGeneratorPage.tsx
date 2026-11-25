@@ -512,6 +512,78 @@ export function TaskGeneratorPage() {
                       onChange={event => changeDraft('constraints', event.target.value.split(/\r?\n/))}
                     />
                   </label>
+                  {(draft.validation_gates?.length || draft.stage_records?.length) && (
+                    <div className="task-detail-section" style={{ marginTop: 16 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                        <div>
+                          <h3 style={{ margin: 0 }}>Package Compiler Validation Summary</h3>
+                          <p className="form-hint" style={{ marginTop: 2 }}>
+                            Multi-stage IR compilation, repository grounding, and automated verification gates.
+                            {typeof draft.repair_attempts === 'number' && draft.repair_attempts > 0
+                              ? ` (${draft.repair_attempts} targeted repair attempt${draft.repair_attempts === 1 ? '' : 's'})`
+                              : ''}
+                          </p>
+                        </div>
+                        <span
+                          className={`status ${
+                            draft.lifecycle_status === 'READY'
+                              ? 'green'
+                              : draft.lifecycle_status === 'FAILED'
+                                ? 'red'
+                                : 'amber'
+                          }`}
+                        >
+                          {draft.lifecycle_status ?? 'COMPILED'}
+                        </span>
+                      </div>
+
+                      {draft.stage_records && draft.stage_records.length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+                          {draft.stage_records.map(rec => (
+                            <span
+                              key={rec.stage}
+                              className={`status ${rec.status === 'failed' ? 'red' : rec.status === 'repaired' ? 'amber' : 'green'}`}
+                              title={`${rec.provider}/${rec.model} (${rec.attempts} attempt${rec.attempts === 1 ? '' : 's'})`}
+                            >
+                              {rec.stage}: {rec.status} ({rec.model.split('/').pop()})
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {draft.validation_gates && draft.validation_gates.length > 0 && (
+                        <div style={{ display: 'grid', gap: 6 }}>
+                          {draft.validation_gates.map(gate => (
+                            <div
+                              key={gate.gate}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'flex-start',
+                                justifyContent: 'space-between',
+                                gap: 10,
+                                padding: '6px 10px',
+                                borderRadius: 6,
+                                background: 'var(--bg-subtle, rgba(255,255,255,0.03))',
+                              }}
+                            >
+                              <div>
+                                <div style={{ fontSize: 13, fontWeight: 600 }}>{gate.gate}</div>
+                                <div className="form-hint">{gate.summary}</div>
+                                {gate.errors && gate.errors.length > 0 && (
+                                  <div style={{ fontSize: 12, color: '#f87171', marginTop: 2 }}>
+                                    {gate.errors.join(' | ')}
+                                  </div>
+                                )}
+                              </div>
+                              <span className={`status ${gate.passed ? 'green' : 'red'}`}>
+                                {gate.passed ? 'PASS' : 'FAIL'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {draft.harbor_files && (
                     <div className="task-detail-section" style={{ marginTop: 20 }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>

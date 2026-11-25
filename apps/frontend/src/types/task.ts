@@ -40,6 +40,24 @@ export type TaskCandidate = {
     symbol?: string | null;
   }>;
   harbor_files?: HarborFiles | null;
+  package_ir?: Record<string, unknown> | null;
+  lifecycle_status?: string | null;
+  validation_gates?: Array<{
+    gate: string;
+    passed: boolean;
+    summary: string;
+    errors?: string[];
+    warnings?: string[];
+  }> | null;
+  stage_records?: Array<{
+    stage: string;
+    status: string;
+    provider: string;
+    model: string;
+    attempts: number;
+    error?: string | null;
+  }> | null;
+  repair_attempts?: number;
 };
 
 export type TaskGeneration = {

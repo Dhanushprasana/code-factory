@@ -79,6 +79,15 @@ export class TaskEntity {
   @Column({ name: 'harbor_verification', type: 'jsonb', nullable: true })
   harborVerification: Record<string, unknown> | null;
 
+  @Column({ name: 'package_ir', type: 'jsonb', nullable: true })
+  packageIr: Record<string, unknown> | null;
+
+  @Column({ name: 'validation_summary', type: 'jsonb', nullable: true })
+  validationSummary: Record<string, unknown> | null;
+
+  @Column({ name: 'lifecycle_status', type: 'varchar', length: 32, nullable: true })
+  lifecycleStatus: string | null;
+
   @OneToMany(() => TaskVersionEntity, (version) => version.task)
   versions: TaskVersionEntity[];
 
