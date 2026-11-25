@@ -16,7 +16,7 @@ from app.context_engine import build_task_context
 logger = logging.getLogger("ai_service.task_factory")
 
 
-PROMPT_VERSION = "task-factory-harbor-v10"
+PROMPT_VERSION = "task-factory-harbor-v11"
 TASK_CATEGORIES = (
     "feature",
     "bug_fix",
@@ -648,7 +648,7 @@ async def generate_task_suggestions(request: TaskGenerationRequest) -> TaskGener
         "    * test_sh: Self-contained, solution-agnostic verifier bash script (#!/bin/bash...) that:\n"
         "        1) Always creates /logs/verifier and registers an EXIT trap (`_harbor_cleanup() { [ -f /logs/verifier/reward.txt ] || echo 0 > /logs/verifier/reward.txt; }; trap _harbor_cleanup EXIT`) BEFORE `set -e` so reward.txt is always written.\n"
         "        2) Uses the same workspace-safe directory check (`[ -d /app/backend ] && cd /app/backend || ([ -d backend ] && cd backend || true)`) and uses paths relative to that directory (`src/...`, NEVER `/app/backend/...` or `backend/...` after `cd`). Runs 100% self-contained inside the container without requiring unstarted external DBs/services. When running `jest`, ALWAYS run `npx jest src/verify-task.spec.ts --moduleNameMapper '{\"^@app/(.*)$\":\"<rootDir>/$1\"}' --passWithNoTests --forceExit` (if `@app/` aliases exist in `tsconfig.json` or `package.json`, omitting `--moduleNameMapper` fails with `Cannot find module '@app/...'`; NEVER pass `--config '{...}'`), and mock every repository injected by the real service (e.g. `getRepositoryToken(OrderEntity)` and `getRepositoryToken(OrdersProductsEntity)` if both are injected).\n"
-        "        3) Verifies ONLY the runtime behavioral contract in instruction_md: for NestJS/HTTP endpoints, boot a `NestApplication` (`const app = module.createNestApplication(); await app.init();`) with the real Controller + Service and mock at the repository/DB boundary (`getRepositoryToken(Entity)`) + `overrideGuard(...)` (NEVER mock or assert `service.<methodName>()` or `controller.<methodName>()` directly, and NEVER use `grep` to assert `solve_sh`-specific filenames, class names, or method names), then send real HTTP requests using `supertest` (`request(app.getHttpServer()).get(...)` / `.patch(...)`).\n"
+        "        3) Verifies ONLY the runtime behavioral contract in instruction_md: for NestJS/HTTP endpoints, boot a `NestApplication` (`const app = module.createNestApplication(); await app.init();`, and guard `if (app) await app.close();` in teardown) with the real Controller + Service, mocking EVERY constructor dependency of the service — both TypeORM repositories (`getRepositoryToken(Entity)`) AND any injected sibling services (e.g. `{ provide: ProductService, useValue: { ... } }`) — plus `overrideGuard(...)` (NEVER mock or assert `service.<methodName>()` or `controller.<methodName>()` directly, and NEVER use `grep` to assert `solve_sh`-specific filenames, class names, or method names), then send real HTTP requests using `supertest` to the exact `@Controller('...')` prefix from `Context Chunks` (e.g. `/order/...` when `@Controller('order')`, NEVER `/orders/...`).\n"
         "        4) Places any temporary `.spec.ts` test harness file inside `src/` (e.g. `src/verify-task.spec.ts`, not `/tmp` or repo root, so Jest `rootDir: \"src\"` and tsconfig paths resolve cleanly), removes the temporary test file on completion, and writes `1` to /logs/verifier/reward.txt only when all build and behavioral checks pass.\n\n"
         f"Generate at most {request.count} distinct suggestions.\n"
         f"Requested category: {request.category}. Difficulty: {request.difficulty}.\n"
