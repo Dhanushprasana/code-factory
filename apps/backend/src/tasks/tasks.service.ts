@@ -321,6 +321,26 @@ export class TasksService {
 
     task.harborFiles = harborFiles ?? null;
     task.harborPackagePath = harborPath;
+    task.packageIr = ((original as any)?.package_ir as Record<string, unknown> | undefined) ?? null;
+    task.lifecycleStatus = ((original as any)?.lifecycle_status as string | undefined) ?? null;
+    task.validationSummary =
+      (original as any)?.validation_gates || (original as any)?.stage_records
+        ? {
+            lifecycleStatus: (original as any)?.lifecycle_status ?? null,
+            validationGates: (original as any)?.validation_gates ?? [],
+            stageRecords: (original as any)?.stage_records ?? [],
+            repairAttempts: (original as any)?.repair_attempts ?? 0,
+          }
+        : null;
+    if (task.packageIr && harborPath) {
+      try {
+        fs.writeFileSync(
+          path.join(packageDir, 'package.ir.json'),
+          JSON.stringify(task.packageIr, null, 2),
+          'utf8',
+        );
+      } catch {}
+    }
     await this.tasks.save(task);
 
     await this.versions.save(this.versions.create({
