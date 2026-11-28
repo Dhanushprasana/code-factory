@@ -354,6 +354,7 @@ export class HarborPackageService {
         'WORKDIR /workspace',
         'COPY repo/ /workspace/',
         `RUN ${installCmd}`,
+        'RUN git init -q && git config user.email "harbor@local" && git config user.name "Harbor" && git add -A && git commit -q -m "baseline"',
         '',
       ].join('\n');
     }
@@ -371,6 +372,7 @@ export class HarborPackageService {
         'WORKDIR /workspace',
         'COPY repo/ /workspace/',
         `RUN ${installCmd}`,
+        'RUN git init -q && git config user.email "harbor@local" && git config user.name "Harbor" && git add -A && git commit -q -m "baseline"',
         '',
       ].join('\n');
     }
@@ -382,6 +384,7 @@ export class HarborPackageService {
         'WORKDIR /workspace',
         'COPY repo/ /workspace/',
         'RUN go mod download',
+        'RUN git init -q && git config user.email "harbor@local" && git config user.name "Harbor" && git add -A && git commit -q -m "baseline"',
         '',
       ].join('\n');
     }
@@ -394,6 +397,7 @@ export class HarborPackageService {
       '',
       'WORKDIR /workspace',
       'COPY repo/ /workspace/',
+      'RUN git init -q && git config user.email "harbor@local" && git config user.name "Harbor" && git add -A && git commit -q -m "baseline"',
       '',
     ].join('\n');
   }

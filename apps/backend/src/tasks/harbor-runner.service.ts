@@ -84,6 +84,7 @@ export class HarborRunnerService {
 
       const rawModel = (agent.modelName || '').trim();
       const isOpenRouter = agent.provider.toLowerCase().includes('openrouter') || rawModel.startsWith('openrouter/');
+      const isGeminiNative = !isOpenRouter && ['antigravity-cli', 'antigravity-sdk', 'gemini-cli'].includes(harborAgent);
       const modelName = isOpenRouter && rawModel.startsWith('openrouter/')
         ? rawModel.slice('openrouter/'.length)
         : rawModel || 'nvidia/nemotron-3.5-super-vl:free';
@@ -109,6 +110,11 @@ export class HarborRunnerService {
           `    model_api_key_name: ${apiKeyEnv}`,
           '    model_api_format: openai_chat_completions',
           '    skip_model_parsing: true',
+        );
+      } else if (isGeminiNative) {
+        agentLines.push(
+          '    skip_model_parsing: true',
+          `    model_api_key_name: ${apiKeyEnv || 'GEMINI_API_KEY'}`,
         );
       } else if (apiKeyEnv) {
         agentLines.push(`    model_api_key_name: ${apiKeyEnv}`);
@@ -271,14 +277,30 @@ export class HarborRunnerService {
       }
 
       let status: HarborRunSummary['status'] = 'running';
-      if (resultJson) {
-        const errored = Number((resultJson.stats as Record<string, any> | undefined)?.n_errored_trials ?? 0);
-        status = score > 0 && errored === 0 ? 'passed' : 'failed';
-      } else if (statusJson?.status === 'failed') {
+      const erroredTrials = Number((resultJson?.stats as Record<string, any> | undefined)?.n_errored_trials ?? 0);
+      const isResultFinished = Boolean(resultJson?.finished_at);
+      const isRunnerRunning = statusJson?.status === 'running' && !isResultFinished;
+
+      if (statusJson?.status === 'failed') {
         status = 'failed';
+      } else if (isRunnerRunning) {
+        status = 'running';
+      } else if (resultJson && isResultFinished) {
+        if (erroredTrials > 0) {
+          status = 'failed';
+          score = 0;
+          passedTasks = 0;
+        } else {
+          status = score > 0 ? 'passed' : 'failed';
+        }
       } else if (statusJson?.status === 'completed') {
         status = score > 0 ? 'passed' : 'failed';
       }
+
+      const exceptionSummary = this.findTrialException(path.join(jobDir, 'runs'));
+      const errorText = typeof statusJson?.error === 'string'
+        ? statusJson.error
+        : exceptionSummary;
 
       const taskTitle = (meta?.taskTitle as string | undefined)
         ?? (packageId ? pkgById.get(packageId)?.title : undefined)
@@ -302,7 +324,7 @@ export class HarborRunnerService {
         durationSeconds,
         startedAt,
         finishedAt,
-        error: typeof statusJson?.error === 'string' ? statusJson.error : null,
+        error: errorText,
       });
     }
 
@@ -341,5 +363,192 @@ export class HarborRunnerService {
     } catch {
       return null;
     }
+  }
+
+  private findTrialException(runsDir: string): string | null {
+    try {
+      if (!fs.existsSync(runsDir)) return null;
+      for (const runEntry of fs.readdirSync(runsDir, { withFileTypes: true })) {
+        if (!runEntry.isDirectory()) continue;
+        const runPath = path.join(runsDir, runEntry.name);
+        for (const trialEntry of fs.readdirSync(runPath, { withFileTypes: true })) {
+          if (!trialEntry.isDirectory()) continue;
+          const excFile = path.join(runPath, trialEntry.name, 'exception.txt');
+          if (fs.existsSync(excFile)) {
+            const lines = fs.readFileSync(excFile, 'utf8').trim().split(/\r?\n/).filter(Boolean);
+            if (lines.length) {
+              return lines[lines.length - 1];
+            }
+          }
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  async getRunArtifacts(jobId: string): Promise<{
+    jobId: string;
+    gitDiff: string;
+    changedFiles: string[];
+    files: Array<{ path: string; size: number; content: string }>;
+  }> {
+    if (!/^[a-zA-Z0-9_-]+$/.test(jobId)) {
+      throw new BadRequestException('Invalid Harbor job identifier.');
+    }
+    const jobDir = path.join(this.jobsRoot(), jobId);
+    if (!fs.existsSync(jobDir)) {
+      throw new BadRequestException('Harbor job was not found.');
+    }
+
+    let gitDiff = this.readTextSafe(path.join(jobDir, 'agent_diff.patch')) ?? '';
+    if (!gitDiff) {
+      try {
+        const runnerUrl = this.config.get<string>('HARBOR_RUNNER_URL', 'http://harbor:8020').replace(/\/+$/, '');
+        const res = await undiciRequest(`${runnerUrl}/runs/${jobId}/diff`, { method: 'GET' });
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          const body = (await res.body.json()) as { git_diff?: string };
+          if (typeof body.git_diff === 'string') {
+            gitDiff = body.git_diff;
+          }
+        }
+      } catch {
+        // Ignore if harbor container is offline or trial container was removed.
+      }
+    }
+
+    const files: Array<{ path: string; size: number; content: string }> = [];
+    const textExts = new Set(['.txt', '.md', '.log', '.json', '.jsonl', '.yaml', '.yml', '.err', '.patch']);
+    const walk = async (dir: string) => {
+      const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+      for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+        const fullPath = path.join(dir, entry.name);
+        const rel = path.relative(jobDir, fullPath).replace(/\\/g, '/');
+        if (entry.isDirectory()) {
+          await walk(fullPath);
+        } else if (entry.isFile()) {
+          const ext = path.extname(entry.name).toLowerCase();
+          if (!textExts.has(ext) && entry.name !== 'Dockerfile') {
+            continue;
+          }
+          const stat = await fs.promises.stat(fullPath);
+          if (stat.size > 512_000) {
+            files.push({
+              path: rel,
+              size: stat.size,
+              content: (await fs.promises.readFile(fullPath, 'utf8')).slice(0, 200_000) + '\n... (truncated)',
+            });
+          } else {
+            files.push({
+              path: rel,
+              size: stat.size,
+              content: await fs.promises.readFile(fullPath, 'utf8'),
+            });
+          }
+        }
+      }
+    };
+    await walk(jobDir);
+
+    const { changedFiles, fallbackDiff } = this.extractChangesFromLogs(gitDiff, files);
+    if (!gitDiff && fallbackDiff) {
+      gitDiff = fallbackDiff;
+    }
+
+    return { jobId, gitDiff, changedFiles, files };
+  }
+
+  private extractChangesFromLogs(
+    gitDiff: string,
+    files: Array<{ path: string; size: number; content: string }>,
+  ): { changedFiles: string[]; fallbackDiff: string } {
+    const found = new Set<string>();
+    const diffChunks: string[] = [];
+
+    if (gitDiff) {
+      for (const line of gitDiff.split(/\r?\n/)) {
+        const gitMatch = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
+        if (gitMatch?.[2]) {
+          found.add(gitMatch[2]);
+          continue;
+        }
+        const plusMatch = /^\+\+\+ (?:b\/)?([^\t\r\n]+)$/.exec(line);
+        if (plusMatch?.[1] && plusMatch[1] !== '/dev/null') {
+          found.add(plusMatch[1].replace(/^b\//, ''));
+        }
+      }
+    }
+
+    if (found.size === 0) {
+      for (const file of files) {
+        if (file.path.endsWith('/agent/aider.txt')) {
+          for (const match of file.content.matchAll(/Applied edit to\s+([^\s\r\n]+)/g)) {
+            if (match[1]) found.add(match[1]);
+          }
+        } else if (file.path.endsWith('/agent/trajectory.json')) {
+          try {
+            const parsed = JSON.parse(file.content) as {
+              steps?: Array<{
+                tool_calls?: Array<{
+                  function_name?: string;
+                  arguments?: Record<string, any>;
+                }>;
+              }>;
+            };
+            const editTools = new Set([
+              'edit_file',
+              'write_file',
+              'replace_file_content',
+              'multi_replace_file_content',
+              'write_to_file',
+              'create_file',
+            ]);
+            for (const step of parsed.steps ?? []) {
+              for (const call of step.tool_calls ?? []) {
+                const fn = (call.function_name ?? '').toLowerCase();
+                if (!editTools.has(fn)) continue;
+                const args = call.arguments ?? {};
+                const rawPath = args.Path ?? args.path ?? args.file_path ?? args.TargetFile ?? args.file;
+                if (typeof rawPath !== 'string' || !rawPath.trim() || rawPath.startsWith('/tmp/')) {
+                  continue;
+                }
+                const relPath = rawPath.replace(/^\/workspace\//, '').replace(/^\.\//, '');
+                found.add(relPath);
+
+                const target = typeof args.Target === 'string' ? args.Target : typeof args.TargetContent === 'string' ? args.TargetContent : '';
+                const replacement = typeof args.Replacement === 'string'
+                  ? args.Replacement
+                  : typeof args.ReplacementContent === 'string'
+                    ? args.ReplacementContent
+                    : typeof args.Content === 'string'
+                      ? args.Content
+                      : typeof args.CodeContent === 'string'
+                        ? args.CodeContent
+                        : '';
+                if (target || replacement) {
+                  diffChunks.push(
+                    `--- a/${relPath}`,
+                    `+++ b/${relPath}`,
+                    '@@',
+                    ...target.split(/\r?\n/).filter((l, i, arr) => i < arr.length - 1 || l !== '').map((l) => `-${l}`),
+                    ...replacement.split(/\r?\n/).filter((l, i, arr) => i < arr.length - 1 || l !== '').map((l) => `+${l}`),
+                  );
+                }
+              }
+            }
+          } catch {
+            // Fall back to regex if trajectory.json is truncated or malformed.
+            for (const match of file.content.matchAll(/(?:"Path"|"path"|"file_path"|"TargetFile"|"file"):\s*"(?:\/workspace\/)?([^"\r\n]+)"/g)) {
+              if (match[1] && !match[1].startsWith('/tmp/')) {
+                found.add(match[1].replace(/^\/workspace\//, ''));
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return { changedFiles: Array.from(found), fallbackDiff: diffChunks.join('\n') };
   }
 }

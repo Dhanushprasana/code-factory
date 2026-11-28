@@ -144,6 +144,11 @@ export class TasksController {
     return this.harborRunner.listRuns();
   }
 
+  @Get('harbor/runs/:jobId/artifacts')
+  getHarborRunArtifacts(@Param('jobId') jobId: string) {
+    return this.harborRunner.getRunArtifacts(jobId);
+  }
+
   @Post('harbor/run')
   startHarborRun(@Body() body: { agentId?: string; packageId?: string } = {}) {
     return this.harborRunner.startRun(body);

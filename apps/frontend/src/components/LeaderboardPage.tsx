@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Play, RefreshCw, Trophy } from 'lucide-react';
+import { FileCode2, Play, RefreshCw, Trophy, X } from 'lucide-react';
 
 export interface HarborAgentSummary {
   id: string;
@@ -57,6 +57,29 @@ export function LeaderboardPage({
   const [runningRequest, setRunningRequest] = useState(false);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const [inspectRun, setInspectRun] = useState<HarborRunEntry | null>(null);
+  const [inspectArtifacts, setInspectArtifacts] = useState<{
+    jobId: string;
+    gitDiff: string;
+    changedFiles?: string[];
+    files: Array<{ path: string; size: number; content: string }>;
+  } | null>(null);
+  const [inspectLoading, setInspectLoading] = useState(false);
+
+  const openRunArtifacts = async (run: HarborRunEntry) => {
+    setInspectRun(run);
+    setInspectArtifacts(null);
+    setInspectLoading(true);
+    try {
+      const res = await fetch(`${apiUrl}/harbor/runs/${run.jobId}/artifacts`);
+      if (res.ok) {
+        const data = await res.json();
+        setInspectArtifacts(data);
+      }
+    } finally {
+      setInspectLoading(false);
+    }
+  };
 
   const loadData = async (silent = false) => {
     if (!silent) setLoading(true);
@@ -345,6 +368,8 @@ export function LeaderboardPage({
                   <th>Score</th>
                   <th>Duration</th>
                   <th>Status</th>
+                  <th>Details</th>
+                  <th>Artifacts</th>
                   <th>Started</th>
                 </tr>
               </thead>
@@ -357,6 +382,16 @@ export function LeaderboardPage({
                     <td><strong>{run.score}%</strong></td>
                     <td>{run.durationSeconds ? `${run.durationSeconds}s` : '—'}</td>
                     <td><span className={`status ${run.status === 'passed' ? 'green' : run.status === 'failed' ? 'amber' : 'gray'}`}>{run.status}</span></td>
+                    <td style={{ maxWidth: 320, fontSize: 11, color: run.error ? '#b42318' : '#667085' }}>{run.error || '—'}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="secondary-button compact-button"
+                        onClick={() => openRunArtifacts(run)}
+                      >
+                        <FileCode2 size={12} /> View Diff &amp; Logs
+                      </button>
+                    </td>
                     <td>{new Date(run.startedAt).toLocaleString()}</td>
                   </tr>
                 ))}
@@ -364,6 +399,73 @@ export function LeaderboardPage({
             </table>
           </div>
         </section>
+      )}
+
+      {inspectRun && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setInspectRun(null)}>
+          <div
+            className="modal"
+            style={{ width: 'min(960px, calc(100vw - 32px))', maxHeight: '88vh', display: 'flex', flexDirection: 'column' }}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Harbor run artifacts"
+            onMouseDown={e => e.stopPropagation()}
+          >
+            <div className="modal-head">
+              <div>
+                <span className="eyebrow">{inspectRun.jobId}</span>
+                <h2>{inspectRun.agentName} · {inspectRun.modelName}</h2>
+              </div>
+              <button className="icon-button" onClick={() => setInspectRun(null)} aria-label="Close">
+                <X size={18} />
+              </button>
+            </div>
+            {inspectLoading ? (
+              <div className="empty-state compact">Loading agent diff and logs…</div>
+            ) : !inspectArtifacts ? (
+              <div className="empty-state compact">Could not load artifacts for this run.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1, gap: '10px' }}>
+                <div className="diff-file-tabs">
+                  <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#475467', alignSelf: 'center', marginRight: '6px' }}>
+                    Changed files:
+                  </span>
+                  {inspectArtifacts.changedFiles?.length ? (
+                    inspectArtifacts.changedFiles.map(filePath => (
+                      <span key={filePath} className="diff-file-tab selected" style={{ cursor: 'default' }}>
+                        <code>{filePath}</code>
+                      </span>
+                    ))
+                  ) : (
+                    <span style={{ fontSize: '0.82rem', color: '#667085', alignSelf: 'center' }}>
+                      None detected
+                    </span>
+                  )}
+                </div>
+                <div className="solve-script-viewer" style={{ flex: 1, maxHeight: '58vh' }}>
+                  {inspectArtifacts.gitDiff ? (
+                    inspectArtifacts.gitDiff.split('\n').map((line, idx) => (
+                      <div
+                        className={`diff-line ${line.startsWith('+') && !line.startsWith('+++') ? 'diff-line-add' : line.startsWith('-') && !line.startsWith('---') ? 'diff-line-delete' : ''}`}
+                        style={{ background: line.startsWith('+') && !line.startsWith('+++') ? 'rgba(18, 183, 106, 0.16)' : line.startsWith('-') && !line.startsWith('---') ? 'rgba(240, 68, 56, 0.16)' : undefined, color: '#eaecf0', gridTemplateColumns: '40px minmax(0, 1fr)' }}
+                        key={idx}
+                      >
+                        <span className="solve-line-number">{idx + 1}</span>
+                        <code>{line || ' '}</code>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="empty-state compact" style={{ color: '#98a2b3' }}>
+                      {inspectArtifacts.changedFiles?.length
+                        ? 'Diff patch unavailable (trial container was removed), but the changed files are listed above.'
+                        : 'No workspace changes captured for this run.'}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
