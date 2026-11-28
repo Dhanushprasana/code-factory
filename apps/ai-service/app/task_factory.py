@@ -126,20 +126,62 @@ class TaskGenerationResponse(BaseModel):
     context_manifest: dict[str, Any]
 
 
-def _extract_json(text: str) -> dict[str, Any]:
+def _try_parse_json(text: str) -> dict[str, Any] | None:
+    """Attempt to parse text as a JSON object. Returns None on failure."""
     stripped = text.strip()
-    if stripped.startswith("```"):
-        stripped = re.sub(r"^```(?:json)?\s*|\s*```$", "", stripped, flags=re.IGNORECASE)
     try:
         result = json.loads(stripped)
-    except json.JSONDecodeError as error:
-        raise HTTPException(
-            status_code=502,
-            detail="The selected AI provider returned a task response that was not valid JSON.",
-        ) from error
-    if not isinstance(result, dict):
-        raise HTTPException(status_code=502, detail="The selected AI provider returned an invalid task response.")
-    return result
+        if isinstance(result, dict):
+            return result
+    except json.JSONDecodeError:
+        pass
+    return None
+
+
+def _extract_json(text: str) -> dict[str, Any]:
+    """
+    Robustly extract a JSON object from LLM output.
+    Handles: bare JSON, markdown code fences, prose-wrapped JSON,
+    and JSON embedded anywhere in a larger body of text.
+    """
+    stripped = text.strip()
+
+    # 1. Try bare parse first (cheapest path)
+    result = _try_parse_json(stripped)
+    if result is not None:
+        return result
+
+    # 2. Strip a leading markdown fence and try again
+    if stripped.startswith("```"):
+        inner = re.sub(r"^```(?:json)?\s*|\s*```$", "", stripped, flags=re.IGNORECASE | re.DOTALL).strip()
+        result = _try_parse_json(inner)
+        if result is not None:
+            return result
+
+    # 3. Extract every ```json ... ``` (or ``` ... ```) block and try each
+    for block in re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", stripped, flags=re.DOTALL | re.IGNORECASE):
+        result = _try_parse_json(block)
+        if result is not None:
+            return result
+
+    # 4. Find the outermost {...} anywhere in the text (handles prose before/after)
+    start = stripped.find("{")
+    if start != -1:
+        # Walk backwards from each candidate closing brace to find the longest valid object
+        pos = len(stripped) - 1
+        while pos > start:
+            end = stripped.rfind("}", start, pos + 1)
+            if end == -1:
+                break
+            result = _try_parse_json(stripped[start:end + 1])
+            if result is not None:
+                return result
+            pos = end - 1
+
+    raise HTTPException(
+        status_code=502,
+        detail="The selected AI provider returned a response that was not valid JSON.",
+    )
 
 
 def _env_setting(name: str, default: str) -> str:
@@ -374,6 +416,32 @@ def _validate_candidates(
     return candidates
 
 
+def _extract_message_content(
+    payload: Any,
+    provider: Literal["openrouter", "ollama"],
+) -> tuple[str, str | None, bool]:
+    try:
+        choice = payload["choices"][0]
+        message = choice["message"]
+        content = message.get("content")
+        finish_reason = choice.get("finish_reason")
+        has_reasoning = bool(message.get("reasoning") or message.get("reasoning_content"))
+    except (KeyError, IndexError, TypeError) as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"{provider.capitalize()} returned an incomplete task response.",
+        ) from error
+    if isinstance(content, list):
+        content = "".join(
+            item.get("text", "")
+            for item in content
+            if isinstance(item, dict) and item.get("type") == "text"
+        )
+    return (content if isinstance(content, str) else ""), (
+        str(finish_reason) if finish_reason is not None else None
+    ), has_reasoning
+
+
 async def _request_chat_completions(
     provider: Literal["openrouter", "ollama"],
     base_url: str,
@@ -390,8 +458,12 @@ async def _request_chat_completions(
             raise HTTPException(status_code=503, detail="OpenRouter requires OPENROUTER_API_KEY.")
         headers["authorization"] = f"Bearer {api_key}"
     if provider == "openrouter":
-        timeout_seconds = min(timeout_seconds, 90.0)
-    async def _post_completion(use_schema: bool) -> httpx.Response:
+        timeout_seconds = min(timeout_seconds, 180.0)
+    async def _post_completion(
+        use_schema: bool,
+        reasoning_override: dict[str, Any] | None = None,
+        prompt_override: str | None = None,
+    ) -> httpx.Response:
         response_format: dict[str, Any] = {"type": "json_object"}
         if use_schema and response_schema is not None:
             strict_schema = (
@@ -412,10 +484,12 @@ async def _request_chat_completions(
             "max_tokens": max_tokens,
             "temperature": 0.2,
             "response_format": response_format,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": [{"role": "user", "content": prompt_override or prompt}],
         }
         if provider == "openrouter" and use_schema and response_schema is not None:
             request_body["provider"] = {"require_parameters": True}
+        if provider == "openrouter" and reasoning_override is not None:
+            request_body["reasoning"] = reasoning_override
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(timeout_seconds, connect=10.0),
         ) as client:
@@ -425,13 +499,15 @@ async def _request_chat_completions(
                 json=request_body,
             )
 
+    used_schema = response_schema is not None
     try:
-        response = await _post_completion(use_schema=response_schema is not None)
+        response = await _post_completion(use_schema=used_schema)
         if (
             provider == "openrouter"
-            and response_schema is not None
+            and used_schema
             and response.status_code in {400, 422}
         ):
+            used_schema = False
             response = await _post_completion(use_schema=False)
     except httpx.TimeoutException as error:
         raise HTTPException(
@@ -490,20 +566,110 @@ async def _request_chat_completions(
         )
     try:
         payload = response.json()
-        content = payload["choices"][0]["message"]["content"]
-    except (ValueError, KeyError, IndexError, TypeError) as error:
+    except ValueError as error:
         raise HTTPException(
             status_code=502,
             detail=f"{provider.capitalize()} returned an incomplete task response.",
         ) from error
-    if isinstance(content, list):
-        content = "".join(
-            item.get("text", "")
-            for item in content
-            if isinstance(item, dict) and item.get("type") == "text"
+    content, finish_reason, has_reasoning = _extract_message_content(payload, provider)
+    if not content.strip() and provider == "openrouter" and (used_schema or has_reasoning):
+        retry_configs: list[tuple[bool, dict[str, Any] | None]] = []
+        if has_reasoning:
+            retry_configs.append((False, {"enabled": False}))
+            retry_configs.append((False, {"effort": "low"}))
+        elif used_schema:
+            retry_configs.append((False, None))
+        for retry_schema, retry_reasoning in retry_configs:
+            try:
+                retry_response = await _post_completion(
+                    use_schema=retry_schema,
+                    reasoning_override=retry_reasoning,
+                )
+                if retry_response.is_success:
+                    retry_payload = retry_response.json()
+                    retry_content, retry_finish_reason, retry_has_reasoning = _extract_message_content(
+                        retry_payload, provider
+                    )
+                    if retry_content.strip():
+                        return retry_content
+                    finish_reason = retry_finish_reason or finish_reason
+                    has_reasoning = retry_has_reasoning or has_reasoning
+            except (httpx.TimeoutException, httpx.RequestError, ValueError, HTTPException):
+                pass
+    if not content.strip():
+        reason_hint = ""
+        if finish_reason == "length" and has_reasoning:
+            reason_hint = " (reasoning exhausted max_tokens before emitting JSON; increase output token budget or switch model)"
+        elif finish_reason:
+            reason_hint = f" (finish_reason={finish_reason})"
+        raise HTTPException(
+            status_code=502,
+            detail=f"{provider.capitalize()} returned an invalid task response{reason_hint}.",
         )
-    if not isinstance(content, str) or not content.strip():
-        raise HTTPException(status_code=502, detail=f"{provider.capitalize()} returned an invalid task response.")
+    if finish_reason == "length":
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"{provider.capitalize()} response was truncated at the {max_tokens}-token output limit "
+                "before completing JSON. Increase the output-token budget or reduce the request scope."
+            ),
+        )
+    try:
+        _extract_json(content)
+    except HTTPException as initial_parse_error:
+        retry_prompt = (
+            "Your previous response was not valid JSON. Retry the original request below once. "
+            "Return exactly one complete JSON object matching the requested schema; do not include "
+            "markdown, code fences, or explanatory prose.\n\n"
+            + prompt
+        )
+        try:
+            retry_response = await _post_completion(
+                use_schema=False,
+                prompt_override=retry_prompt,
+            )
+        except httpx.TimeoutException as error:
+            raise HTTPException(
+                status_code=504,
+                detail=f"{provider.capitalize()} JSON-retry request timed out.",
+            ) from error
+        except httpx.RequestError as error:
+            raise HTTPException(
+                status_code=502 if provider == "openrouter" else 503,
+                detail=f"{provider.capitalize()} JSON-retry request could not connect.",
+            ) from error
+        if not retry_response.is_success:
+            raise HTTPException(
+                status_code=502,
+                detail=f"{provider.capitalize()} rejected the JSON-retry request (HTTP {retry_response.status_code}).",
+            ) from initial_parse_error
+        try:
+            retry_payload = retry_response.json()
+        except ValueError as error:
+            raise HTTPException(
+                status_code=502,
+                detail=f"{provider.capitalize()} returned an invalid JSON-retry response.",
+            ) from error
+        retry_content, retry_finish_reason, _ = _extract_message_content(retry_payload, provider)
+        if retry_finish_reason == "length":
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"{provider.capitalize()} JSON retry was truncated at the {max_tokens}-token output limit. "
+                    "Increase the output-token budget or reduce the request scope."
+                ),
+            )
+        try:
+            _extract_json(retry_content)
+        except HTTPException as retry_parse_error:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"{provider.capitalize()} returned invalid JSON on the initial response and one retry "
+                    f"(finish_reason={retry_finish_reason or 'unknown'}). Try again or choose another model."
+                ),
+            ) from retry_parse_error
+        return retry_content
     return content
 
 

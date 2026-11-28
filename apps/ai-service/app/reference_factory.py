@@ -19,8 +19,8 @@ from app.task_factory import (
 )
 
 TaskProvider = Literal["openrouter", "ollama"]
-PATCH_REPAIR_SOURCE_FILE_LIMIT = 64000
-PATCH_REPAIR_SOURCE_TOTAL_LIMIT = 150000
+PATCH_REPAIR_SOURCE_FILE_LIMIT = 256000
+PATCH_REPAIR_SOURCE_TOTAL_LIMIT = 512000
 
 
 class ReferenceTaskInput(BaseModel):
@@ -259,6 +259,69 @@ def _patch_repair_response_schema(allowed_paths: set[str]) -> dict[str, Any]:
     })
 
 
+def _normalize_patch_repair_output(value: Any, allowed_paths: set[str]) -> Any:
+    if not isinstance(value, dict):
+        return value
+    if "files" not in value:
+        for alias in ("repaired_files", "changes", "patches"):
+            if isinstance(value.get(alias), list):
+                value = {"files": value[alias]}
+                break
+        else:
+            if "file_path" in value and "content" in value:
+                value = {"files": [value]}
+    files = value.get("files")
+    if isinstance(files, dict):
+        converted: list[dict[str, Any]] = []
+        for path, item in files.items():
+            if isinstance(item, dict):
+                converted.append({
+                    "file_path": item.get("file_path", path),
+                    "action": item.get("action", "modify"),
+                    "content": item.get("content", ""),
+                })
+            elif isinstance(item, str):
+                converted.append({
+                    "file_path": path,
+                    "action": "modify",
+                    "content": item,
+                })
+        value = {"files": converted}
+    elif isinstance(files, list):
+        default_path = next(iter(allowed_paths)) if len(allowed_paths) == 1 else None
+        fixed_files: list[Any] = []
+        for item in files:
+            if not isinstance(item, dict):
+                fixed_files.append(item)
+                continue
+            entry = dict(item)
+            if not entry.get("file_path"):
+                for alias in ("path", "file"):
+                    if isinstance(entry.get(alias), str) and entry[alias].strip():
+                        entry["file_path"] = entry[alias].strip()
+                        break
+                if not entry.get("file_path") and default_path:
+                    entry["file_path"] = default_path
+            if isinstance(entry.get("file_path"), str):
+                candidate_path = entry["file_path"].strip().lstrip("./")
+                for prefix in ("a/", "b/"):
+                    if candidate_path.startswith(prefix) and candidate_path[len(prefix):] in allowed_paths:
+                        candidate_path = candidate_path[len(prefix):]
+                        break
+                entry["file_path"] = candidate_path
+            if not entry.get("action"):
+                entry["action"] = "modify"
+            for alias in ("path", "file"):
+                entry.pop(alias, None)
+            fixed_files.append({
+                key: entry[key]
+                for key in ("file_path", "action", "content")
+                if key in entry
+            })
+        value = {"files": fixed_files}
+    return {key: value[key] for key in ("files",) if key in value}
+
+
 def _validate_patch_repair_output(value: Any, allowed_paths: set[str]) -> PatchRepairOutput:
     try:
         output = PatchRepairOutput.model_validate(value)
@@ -286,10 +349,10 @@ def _validate_patch_repair_output(value: Any, allowed_paths: set[str]) -> PatchR
             )
         seen_paths.add(file.file_path)
         total_chars += len(file.content)
-    if seen_paths != allowed_paths:
+    if not seen_paths:
         raise HTTPException(
             status_code=502,
-            detail="The AI provider must return a full-file repair for every path in the rejected patch.",
+            detail="The AI provider must return at least one full-file repair from the rejected patch.",
         )
     if total_chars > PATCH_REPAIR_SOURCE_TOTAL_LIMIT:
         raise HTTPException(
@@ -312,18 +375,21 @@ def _build_repaired_patch(
     )
     if repository is None:
         raise HTTPException(status_code=422, detail="The patch repair repository is not in the baseline.")
+    raw_sources = _patch_repair_sources(request)
+    source_statuses = {item["path"]: item.get("status", "unknown") for item in raw_sources if "path" in item}
     sources = {
         item["path"]: item
-        for item in _patch_repair_sources(request)
+        for item in raw_sources
         if item.get("status") in {"available", "not-found"}
     }
     patches: list[str] = []
     for file in output.files:
         source = sources.get(file.file_path)
         if source is None:
+            status = source_statuses.get(file.file_path, "missing")
             raise HTTPException(
                 status_code=502,
-                detail="A repaired file is unavailable or excluded from the pinned source context.",
+                detail=f"A repaired file is unavailable or excluded from the pinned source context ({file.file_path}: {status}).",
             )
         exists = source["status"] == "available"
         if file.action == "modify" and not exists:
@@ -432,6 +498,118 @@ def _reference_response_schema(allowed_repository_ids: set[str]) -> dict[str, An
     })
 
 
+def _normalize_reference_output(
+    value: Any,
+    allowed_repository_ids: set[str],
+) -> Any:
+    if not isinstance(value, dict):
+        return value
+    default_repo_id = next(iter(allowed_repository_ids)) if len(allowed_repository_ids) == 1 else None
+    normalized = dict(value)
+
+    plan_items = normalized.get("implementation_plan")
+    if isinstance(plan_items, list):
+        action_map = {"update": "modify", "edit": "modify", "add": "create", "new": "create", "remove": "delete"}
+        fixed_plan: list[Any] = []
+        for item in plan_items:
+            if not isinstance(item, dict):
+                fixed_plan.append(item)
+                continue
+            entry = dict(item)
+            if not entry.get("repository_id") and default_repo_id:
+                entry["repository_id"] = default_repo_id
+            action = str(entry.get("action") or "").strip().lower()
+            if action in action_map:
+                entry["action"] = action_map[action]
+            if not entry.get("rationale"):
+                for alias in ("description", "summary", "reason"):
+                    if isinstance(entry.get(alias), str) and entry[alias].strip():
+                        entry["rationale"] = entry[alias].strip()
+                        break
+            if not entry.get("steps"):
+                raw_steps = entry.get("changes") or entry.get("details")
+                if isinstance(raw_steps, list):
+                    entry["steps"] = [str(s).strip() for s in raw_steps if str(s).strip()][:10]
+                elif isinstance(raw_steps, str) and raw_steps.strip():
+                    entry["steps"] = [raw_steps.strip()]
+                elif isinstance(entry.get("rationale"), str) and entry["rationale"].strip():
+                    entry["steps"] = [entry["rationale"].strip()]
+            fixed_plan.append({
+                key: entry[key]
+                for key in ("repository_id", "file_path", "action", "rationale", "steps")
+                if key in entry
+            })
+        normalized["implementation_plan"] = fixed_plan
+
+    patches = normalized.get("patches")
+    if isinstance(patches, list):
+        merged_patches: dict[str, list[str]] = {}
+        passthrough_patches: list[Any] = []
+        for item in patches:
+            if not isinstance(item, dict):
+                passthrough_patches.append(item)
+                continue
+            entry = dict(item)
+            if not entry.get("repository_id") and default_repo_id:
+                entry["repository_id"] = default_repo_id
+            if not entry.get("patch_diff"):
+                for alias in ("diff", "patch"):
+                    if isinstance(entry.get(alias), str) and entry[alias].strip():
+                        entry["patch_diff"] = entry[alias]
+                        break
+            repo_id = entry.get("repository_id")
+            patch_diff = entry.get("patch_diff")
+            if isinstance(repo_id, str) and repo_id and isinstance(patch_diff, str) and patch_diff.strip():
+                merged_patches.setdefault(repo_id, []).append(patch_diff.rstrip("\n") + "\n")
+            else:
+                passthrough_patches.append({
+                    key: entry[key]
+                    for key in ("repository_id", "patch_diff")
+                    if key in entry
+                })
+        normalized["patches"] = [
+            {"repository_id": repo_id, "patch_diff": "".join(diffs)}
+            for repo_id, diffs in merged_patches.items()
+        ] + passthrough_patches
+
+    tests = normalized.get("tests")
+    if isinstance(tests, list):
+        fixed_tests: list[Any] = []
+        for item in tests:
+            if not isinstance(item, dict):
+                fixed_tests.append(item)
+                continue
+            entry = dict(item)
+            if not entry.get("repository_id") and default_repo_id:
+                entry["repository_id"] = default_repo_id
+            if not entry.get("purpose"):
+                for alias in ("description", "rationale", "summary"):
+                    if isinstance(entry.get(alias), str) and entry[alias].strip():
+                        entry["purpose"] = entry[alias].strip()
+                        break
+            if not entry.get("content"):
+                for alias in ("code", "source"):
+                    if isinstance(entry.get(alias), str) and entry[alias].strip():
+                        entry["content"] = entry[alias]
+                        break
+            if not entry.get("test_type") and isinstance(entry.get("type"), str):
+                entry["test_type"] = entry["type"]
+            if entry.get("test_type") not in {"feature", "regression", "acceptance"}:
+                entry["test_type"] = "feature"
+            fixed_tests.append({
+                key: entry[key]
+                for key in ("repository_id", "file_path", "test_type", "purpose", "content")
+                if key in entry
+            })
+        normalized["tests"] = fixed_tests
+
+    return {
+        key: normalized[key]
+        for key in ("implementation_plan", "patches", "tests")
+        if key in normalized
+    }
+
+
 def _validate_reference_output(
     value: Any,
     allowed_repository_ids: set[str],
@@ -505,7 +683,15 @@ async def generate_reference_solution(request: ReferenceGenerationRequest) -> di
         int(_env_setting("TASK_CONTEXT_TOKEN_BUDGET", "10000")),
         int(_env_setting("REFERENCE_CONTEXT_TOKEN_BUDGET", "18000")),
     )
-    output_token_budget = int(_env_setting("REFERENCE_OUTPUT_TOKEN_BUDGET", "12000"))
+    output_token_budget = int(_env_setting("REFERENCE_OUTPUT_TOKEN_BUDGET", "64000"))
+    non_core_categories = {"benchmarking", "documentation", "ui_enhancement"}
+    affected_text = " ".join(request.task.affected_modules).lower()
+    scope_filter = (
+        "all"
+        if request.task.category in non_core_categories
+        or any(marker in affected_text for marker in ("bench", "docs", "website"))
+        else "core_library"
+    )
     context, manifest = build_task_context(
         [repository.model_dump() for repository in request.repositories],
         " ".join([
@@ -519,7 +705,27 @@ async def generate_reference_solution(request: ReferenceGenerationRequest) -> di
         request.task.constraints,
         token_budget,
         max_files=18,
+        scope_filter=scope_filter,
     )
+    vector_chunks_context = [
+        {
+            "repository_id": repository.repository_id,
+            "chunks": [
+                {
+                    "file_path": vc.get("file_path"),
+                    "symbol_name": vc.get("symbol_name"),
+                    "start_line": vc.get("start_line"),
+                    "end_line": vc.get("end_line"),
+                    "similarity": vc.get("similarity"),
+                    "content": str(vc.get("content", ""))[:1800],
+                }
+                for vc in (repository.vector_chunks or [])[:24]
+                if isinstance(vc, dict) and vc.get("file_path")
+            ],
+        }
+        for repository in request.repositories
+        if repository.vector_chunks
+    ]
     if not any(repository["chunks"] for repository in context["repositories"]):
         raise HTTPException(
             status_code=422,
@@ -545,8 +751,21 @@ async def generate_reference_solution(request: ReferenceGenerationRequest) -> di
         f"Reviewer feedback: {request.reviewer_feedback or 'None provided.'}. "
     )
     if request.patch_repair:
-        allowed_paths = set(_patch_repair_paths(request.patch_repair))
-        if not allowed_paths or len(allowed_paths) > 10:
+        # Build allowed_paths only from paths that are actually loadable (available or not-found).
+        # Symlinks, binary files, oversized files, and sensitive paths are excluded and must not
+        # be listed in the prompt or schema — the model cannot repair what we cannot read.
+        raw_sources = _patch_repair_sources(request)
+        allowed_paths = {
+            item["path"]
+            for item in raw_sources
+            if item.get("status") in {"available", "not-found"}
+        }
+        if not allowed_paths:
+            raise HTTPException(
+                status_code=422,
+                detail="No readable source files were found in the rejected patch for repair.",
+            )
+        if len(allowed_paths) > 10:
             raise HTTPException(
                 status_code=422,
                 detail="The rejected patch has too many paths for a bounded full-file repair.",
@@ -572,11 +791,13 @@ async def generate_reference_solution(request: ReferenceGenerationRequest) -> di
         response_schema = _patch_repair_response_schema(allowed_paths)
     else:
         patch_instructions = (
-            "Return only a JSON object with implementation_plan, patches, and tests. "
-            "The implementation plan must be file-by-file. Each plan item and test file must include "
-            "the exact repository_id from the supplied context. "
-            "Each patches item must include one repository_id and a complete unified Git diff; "
-            "do not output only @@ hunk lines without their file headers. "
+            "Return only a JSON object with keys `implementation_plan`, `patches`, and `tests`. "
+            "Each `implementation_plan` item MUST have exact keys: `repository_id`, `file_path`, `action` "
+            "(\"create\" | \"modify\" | \"delete\" | \"test\"), `rationale` (10-1000 chars), and `steps` (non-empty array of strings). "
+            "Each `patches` item MUST have exact keys: `repository_id` and `patch_diff` (complete unified Git diff). "
+            "Each `tests` item MUST have exact keys: `repository_id`, `file_path`, `test_type` "
+            "(\"feature\" | \"regression\" | \"acceptance\"), `purpose` (10-500 chars), and `content` (full test file content). "
+            "Do not output only @@ hunk lines without their file headers. "
             "Include no more than one patch bundle per repository. "
             f"Every repository_id must be selected from {json.dumps(sorted(allowed_repository_ids))}. "
             "\n\nSTRICT UNIFIED DIFF FORMAT RULES:\n"
@@ -597,11 +818,20 @@ async def generate_reference_solution(request: ReferenceGenerationRequest) -> di
             "Do NOT overwrite existing test files. Test paths must be relative and within the repository. "
             "Test assertions must check observable, deterministic outcomes.\n"
         )
+        vector_section = (
+            f"Codebase vector context (semantic matches from pgvector): {json.dumps(vector_chunks_context, ensure_ascii=False)}\n\n"
+            if vector_chunks_context
+            else ""
+        )
         prompt = (
             common_prompt
-            + patch_instructions
+            + "\n\nSTEP 1 — CODEBASE VECTOR & PINNED SOURCE CONTEXT:\n"
+            + vector_section
+            + f"Pinned repository context: {json.dumps(context, ensure_ascii=False)}\n\n"
+            + "STEP 2 — NEW FEATURE REQUIREMENT:\n"
             + task_prompt
-            + f"Pinned repository context: {json.dumps(context, ensure_ascii=False)}"
+            + "\n\nSTEP 3 — GENERATE REFERENCE SOLUTION AND TESTS:\n"
+            + patch_instructions
         )
         response_schema = _reference_response_schema(allowed_repository_ids)
     response_text = await _request_chat_completions(
@@ -612,12 +842,15 @@ async def generate_reference_solution(request: ReferenceGenerationRequest) -> di
         output_token_budget,
         api_key,
         response_schema,
-        timeout_seconds=1200.0 if request.provider == "ollama" else 90.0,
+        timeout_seconds=1200.0 if request.provider == "ollama" else 180.0,
     )
     if request.patch_repair:
         repair_output = _validate_patch_repair_output(
-            _extract_json(response_text),
-            set(_patch_repair_paths(request.patch_repair)),
+            _normalize_patch_repair_output(
+                _extract_json(response_text),
+                allowed_paths,
+            ),
+            allowed_paths,
         )
         patch_diff = _build_repaired_patch(request, repair_output)
         return {
@@ -633,7 +866,10 @@ async def generate_reference_solution(request: ReferenceGenerationRequest) -> di
             "context_manifest": manifest,
         }
 
-    output = _validate_reference_output(_extract_json(response_text), allowed_repository_ids)
+    output = _validate_reference_output(
+        _normalize_reference_output(_extract_json(response_text), allowed_repository_ids),
+        allowed_repository_ids,
+    )
     return {
         "operation_id": request.operation_id,
         "status": "pending_review",

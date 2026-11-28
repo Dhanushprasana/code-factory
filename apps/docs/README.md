@@ -383,6 +383,7 @@ Backend configuration is read from `apps/backend/.env` (copy `.env.example` firs
 | `OLLAMA_CONTEXT_LENGTH` | Context window configured on the optional Ollama container (default `16384`) |
 | `TASK_CONTEXT_TOKEN_BUDGET` | Approximate source-context token budget (default `10000`) |
 | `TASK_OUTPUT_TOKEN_BUDGET` | Provider task-generation output token budget (default `3000`) |
+| `REFERENCE_OUTPUT_TOKEN_BUDGET` | Maximum output tokens requested for generated reference solutions (default `64000`) |
 
 When `OPENROUTER_API_KEY` is stored in `apps/backend/.env`, start or recreate the AI service with `docker compose --env-file apps\backend\.env ...`. The backend's service-level `env_file` only configures the backend container; Compose needs `--env-file` to interpolate the key into the AI-service environment.
 

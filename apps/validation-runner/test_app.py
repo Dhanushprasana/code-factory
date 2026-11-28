@@ -1,5 +1,6 @@
 import os
 import tomllib
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -19,6 +20,7 @@ from app import (
     _harbor_provider_failure,
     _phase_status,
     _redact,
+    _run_command,
     _validate_agent_command,
     _validate_command,
     _validate_harbor_request,
@@ -31,6 +33,49 @@ def test_command_validation_rejects_shells_and_empty_arguments():
         _validate_command(CommandSpec(args=["sh", "-c", "npm test"]))
     with pytest.raises(HTTPException):
         _validate_command(CommandSpec(args=["npm", ""]))
+
+
+def test_run_command_configures_corepack_for_isolated_validation():
+    class FakeDockerAPI:
+        environment = None
+        command = None
+
+        def exec_create(self, container_id, **kwargs):
+            self.environment = kwargs["environment"]
+            self.command = kwargs["cmd"]
+            return {"Id": "fake-exec"}
+
+        def exec_start(self, command_id, stream, demux):
+            return iter([(b"completed", None)])
+
+        def exec_inspect(self, command_id):
+            return {"ExitCode": 0}
+
+    api = FakeDockerAPI()
+    container = SimpleNamespace(
+        id="fake-container",
+        client=SimpleNamespace(api=api),
+    )
+
+    result = _run_command(
+        container,
+        CommandSpec(args=["pnpm", "--dir", ".", "install", "--frozen-lockfile"]),
+        "setup",
+        "repo-1",
+        "/workspace/.venv/bin",
+    )
+
+    assert result["status"] == "passed"
+    assert api.environment["COREPACK_ENABLE_PROJECT_SPEC"] == "0"
+    assert api.environment["COREPACK_HOME"] == "/home/node/.cache/corepack"
+    assert api.command[-6:] == [
+        "corepack",
+        "pnpm@9.15.0",
+        "--dir",
+        ".",
+        "install",
+        "--frozen-lockfile",
+    ]
 
 
 def test_agent_command_validation_allows_gemini_cli_and_rejects_shell_execution():

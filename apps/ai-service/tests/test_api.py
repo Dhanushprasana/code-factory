@@ -22,6 +22,13 @@ def test_health():
     assert response.json()["status"] == "ok"
 
 
+def test_json_parser_error_is_not_task_specific():
+    with pytest.raises(HTTPException) as error:
+        task_factory._extract_json('{"incomplete":')
+
+    assert error.value.detail == "The selected AI provider returned a response that was not valid JSON."
+
+
 def test_analysis_contract():
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -543,7 +550,7 @@ def test_reference_generation_uses_task_provider_and_pinned_context(
             assert "ordered and non-overlapping" in prompt
             assert "even a blank context line must contain its leading space" in prompt
             assert "Do not include placeholder changes" in prompt
-        assert timeout_seconds == (1200.0 if provider == "ollama" else 90.0)
+        assert timeout_seconds == (1200.0 if provider == "ollama" else 180.0)
         if repair_context:
             assert response_schema == reference_factory._patch_repair_response_schema({
                 "src/orders/service.py",
@@ -972,6 +979,95 @@ async def test_openrouter_falls_back_to_json_object_on_400(monkeypatch):
     assert "provider" not in calls[1]
 
 
+@pytest.mark.asyncio
+async def test_chat_completion_retries_malformed_json_with_json_object(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+        is_success = True
+
+        def __init__(self, content):
+            self.content = content
+
+        def json(self):
+            return {"choices": [{
+                "message": {"content": self.content},
+                "finish_reason": "stop",
+            }]}
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, headers, json):
+            calls.append(json)
+            return FakeResponse("not json" if len(calls) == 1 else '{"ok": true}')
+
+    monkeypatch.setattr(task_factory.httpx, "AsyncClient", FakeAsyncClient)
+
+    result = await task_factory._request_chat_completions(
+        "openrouter",
+        "https://openrouter.test/api/v1",
+        "test-model",
+        "Return a JSON object.",
+        500,
+        "test-key",
+        {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+    )
+
+    assert result == '{"ok": true}'
+    assert len(calls) == 2
+    assert calls[0]["response_format"]["type"] == "json_schema"
+    assert calls[1]["response_format"] == {"type": "json_object"}
+    assert "previous response was not valid JSON" in calls[1]["messages"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_reports_json_truncation(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+        is_success = True
+
+        def json(self):
+            return {"choices": [{
+                "message": {"content": '{"partial":'},
+                "finish_reason": "length",
+            }]}
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, headers, json):
+            return FakeResponse()
+
+    monkeypatch.setattr(task_factory.httpx, "AsyncClient", FakeAsyncClient)
+
+    with pytest.raises(HTTPException, match="truncated at the 500-token output limit"):
+        await task_factory._request_chat_completions(
+            "openrouter",
+            "https://openrouter.test/api/v1",
+            "test-model",
+            "Return a JSON object.",
+            500,
+            "test-key",
+            {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+        )
+
+
 def test_analysis_features_endpoint_uses_vector_chunks(monkeypatch):
     from app import feature_extractor
 
@@ -1022,4 +1118,305 @@ def test_analysis_features_endpoint_uses_vector_chunks(monkeypatch):
     assert payload["status"] == "completed"
     assert payload["features"][0]["name"] == "Value Parsing"
     assert "Parses raw text inputs" in payload["features"][0]["description"]
+
+
+@pytest.mark.anyio
+async def test_request_chat_completions_retries_without_schema_on_empty_content(monkeypatch):
+    from app import task_factory
+
+    calls: list[dict] = []
+
+    class FakeResponse:
+        def __init__(self, status_code: int, payload: dict):
+            self.status_code = status_code
+            self._payload = payload
+            self.is_success = 200 <= status_code < 300
+
+        def json(self):
+            return self._payload
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, headers, json):
+            calls.append(json)
+            if len(calls) == 1:
+                return FakeResponse(200, {"choices": [{"message": {"content": ""}, "finish_reason": "stop"}]})
+            return FakeResponse(200, {"choices": [{"message": {"content": '{"ok": true}'}, "finish_reason": "stop"}]})
+
+    monkeypatch.setattr(task_factory.httpx, "AsyncClient", FakeAsyncClient)
+
+    result = await task_factory._request_chat_completions(
+        "openrouter",
+        "https://openrouter.test/api/v1",
+        "test-model",
+        "Return JSON.",
+        500,
+        "test-key",
+        {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+    )
+
+    assert result == '{"ok": true}'
+    assert len(calls) == 2
+    assert calls[0]["response_format"]["type"] == "json_schema"
+    assert calls[1]["response_format"] == {"type": "json_object"}
+
+
+def test_reference_generation_orders_vector_context_before_requirements(monkeypatch, tmp_path):
+    source = tmp_path / "src" / "validator.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("def validate(value):\n    return True\n", encoding="utf-8")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+
+    captured_prompt: dict[str, str] = {}
+
+    async def fake_provider(
+        provider,
+        base_url,
+        model,
+        prompt,
+        max_tokens,
+        api_key,
+        response_schema,
+        timeout_seconds,
+    ):
+        captured_prompt["text"] = prompt
+        return json.dumps({
+            "implementation_plan": [{
+                "repository_id": "repo-vec-1",
+                "file_path": "src/validator.py",
+                "action": "modify",
+                "rationale": "Add length check to validator.",
+                "steps": ["Update validate function."],
+            }],
+            "patches": [{
+                "repository_id": "repo-vec-1",
+                "patch_diff": (
+                    "diff --git a/src/validator.py b/src/validator.py\n"
+                    "--- a/src/validator.py\n+++ b/src/validator.py\n"
+                    "@@ -1,2 +1,3 @@\n def validate(value):\n+    if not value: return False\n     return True\n"
+                ),
+            }],
+            "tests": [{
+                "repository_id": "repo-vec-1",
+                "file_path": "tests/test_validator.py",
+                "test_type": "feature",
+                "purpose": "Verify empty values fail validation.",
+                "content": "def test_empty():\n    assert validate('') is False\n",
+            }],
+        })
+
+    monkeypatch.setattr(reference_factory, "_request_chat_completions", fake_provider)
+
+    response = client.post("/api/v1/references/generate", json={
+        "operation_id": "ref-vec-1",
+        "project_id": "proj-1",
+        "provider": "openrouter",
+        "task": {
+            "title": "Reject empty values",
+            "description": "Ensure validate rejects empty strings.",
+            "category": "new_feature",
+            "difficulty": "easy",
+            "requirements": ["Reject empty string"],
+            "acceptance_criteria": ["validate('') returns False"],
+            "constraints": [],
+            "affected_modules": ["src"],
+            "task_version": 1,
+        },
+        "repositories": [{
+            "repository_id": "repo-vec-1",
+            "repository_name": "org/validator",
+            "snapshot_id": "snap-1",
+            "analysis_id": "analysis-1",
+            "commit_sha": "deadbeef",
+            "repository_path": str(tmp_path),
+            "summary": {"modules": [{"name": "src", "path": "src"}], "language": ["Python"]},
+            "report": {
+                "directory_tree": [{"path": "src/validator.py", "type": "file"}],
+                "symbols": [{"name": "validate", "kind": "function", "file_path": "src/validator.py", "start_line": 1, "end_line": 2}],
+                "api_routes": [],
+                "database_entities": [],
+                "tests": {"files": []},
+                "graph": {"nodes": [], "edges": []},
+            },
+            "vector_chunks": [{
+                "file_path": "src/validator.py",
+                "symbol_name": "validate",
+                "start_line": 1,
+                "end_line": 2,
+                "similarity": 0.92,
+                "content": "def validate(value):\n    return True",
+            }],
+        }],
+    })
+
+    assert response.status_code == 200
+    prompt = captured_prompt["text"]
+    step1_idx = prompt.index("STEP 1 — CODEBASE VECTOR & PINNED SOURCE CONTEXT")
+    vec_idx = prompt.index("Codebase vector context")
+    step2_idx = prompt.index("STEP 2 — NEW FEATURE REQUIREMENT")
+    step3_idx = prompt.index("STEP 3 — GENERATE REFERENCE SOLUTION AND TESTS")
+    assert step1_idx < vec_idx < step2_idx < step3_idx
+
+
+@pytest.mark.anyio
+async def test_request_chat_completions_disables_reasoning_when_reasoning_exhausts_tokens(monkeypatch):
+    from app import task_factory
+
+    calls: list[dict] = []
+
+    class FakeResponse:
+        def __init__(self, status_code: int, payload: dict):
+            self.status_code = status_code
+            self._payload = payload
+            self.is_success = 200 <= status_code < 300
+
+        def json(self):
+            return self._payload
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, headers, json):
+            calls.append(json)
+            if len(calls) == 1:
+                return FakeResponse(200, {
+                    "choices": [{
+                        "message": {"content": "", "reasoning": "thinking..."},
+                        "finish_reason": "length",
+                    }],
+                })
+            return FakeResponse(200, {
+                "choices": [{
+                    "message": {"content": '{"ok": true}'},
+                    "finish_reason": "stop",
+                }],
+            })
+
+    monkeypatch.setattr(task_factory.httpx, "AsyncClient", FakeAsyncClient)
+
+    result = await task_factory._request_chat_completions(
+        "openrouter",
+        "https://openrouter.test/api/v1",
+        "baidu/ernie-5.5-flash-preview:free",
+        "Return JSON.",
+        16000,
+        "test-key",
+        {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+    )
+
+    assert result == '{"ok": true}'
+    assert len(calls) == 2
+    assert calls[1]["reasoning"] == {"enabled": False}
+    assert calls[1]["response_format"] == {"type": "json_object"}
+
+
+def test_normalize_reference_output_maps_common_llm_field_aliases():
+    normalized = reference_factory._normalize_reference_output(
+        {
+            "implementation_plan": [{
+                "file_path": "src/orders/service.py",
+                "action": "update",
+                "description": "Add validation for empty orders before persistence.",
+            }],
+            "patches": [{
+                "diff": (
+                    "diff --git a/src/orders/service.py b/src/orders/service.py\n"
+                    "--- a/src/orders/service.py\n+++ b/src/orders/service.py\n"
+                    "@@ -1,2 +1,3 @@\n def create_order(order):\n+    if not order: raise ValueError('empty')\n     return order\n"
+                ),
+                "patch_diff_note": "extra commentary field should be stripped",
+            }],
+            "tests": [{
+                "file_path": "tests/test_orders.py",
+                "type": "unit",
+                "description": "Verify empty order raises ValueError.",
+                "code": "def test_empty():\n    assert True\n",
+            }],
+        },
+        {"repo-1"},
+    )
+    validated = reference_factory._validate_reference_output(normalized, {"repo-1"})
+    assert validated.implementation_plan[0].repository_id == "repo-1"
+    assert validated.implementation_plan[0].action == "modify"
+    assert validated.implementation_plan[0].rationale.startswith("Add validation")
+    assert validated.implementation_plan[0].steps
+    assert validated.tests[0].test_type == "feature"
+    assert validated.tests[0].purpose.startswith("Verify empty order")
+
+
+def test_normalize_patch_repair_output_handles_dict_and_single_file():
+    normalized = reference_factory._normalize_patch_repair_output(
+        {"file_path": "src/orders/service.py", "action": "modify", "content": "def create_order(o):\n    return o\n"},
+        {"src/orders/service.py"},
+    )
+    validated = reference_factory._validate_patch_repair_output(normalized, {"src/orders/service.py"})
+    assert validated.files[0].file_path == "src/orders/service.py"
+    assert validated.files[0].action == "modify"
+
+
+def test_normalize_patch_repair_strips_diff_prefixes_and_accepts_subset():
+    normalized = reference_factory._normalize_patch_repair_output(
+        {"files": [{"file_path": "b/src/orders/service.py", "action": "modify", "content": "def create_order(o):\n    return o\n"}]},
+        {"src/orders/service.py", "src/orders/types.py"},
+    )
+    validated = reference_factory._validate_patch_repair_output(
+        normalized,
+        {"src/orders/service.py", "src/orders/types.py"},
+    )
+    assert validated.files[0].file_path == "src/orders/service.py"
+
+
+def test_normalize_reference_output_merges_multiple_patches_for_same_repository():
+    normalized = reference_factory._normalize_reference_output(
+        {
+            "implementation_plan": [{
+                "file_path": "src/a.py",
+                "action": "modify",
+                "rationale": "Update both modules consistently.",
+                "steps": ["Update a.py and b.py."],
+            }],
+            "patches": [
+                {
+                    "repository_id": "repo-1",
+                    "patch_diff": "diff --git a/src/a.py b/src/a.py\n--- a/src/a.py\n+++ b/src/a.py\n@@ -1 +1 @@\n-a = 1\n+a = 2\n",
+                },
+                {
+                    "repository_id": "repo-1",
+                    "patch_diff": "diff --git a/src/b.py b/src/b.py\n--- a/src/b.py\n+++ b/src/b.py\n@@ -1 +1 @@\n-b = 1\n+b = 2\n",
+                },
+            ],
+            "tests": [{
+                "file_path": "tests/test_ab.py",
+                "test_type": "feature",
+                "purpose": "Verify updated values.",
+                "content": "def test_ab():\n    assert True\n",
+            }],
+        },
+        {"repo-1"},
+    )
+    validated = reference_factory._validate_reference_output(normalized, {"repo-1"})
+    assert len(validated.patches) == 1
+    assert "diff --git a/src/a.py b/src/a.py" in validated.patches[0].patch_diff
+    assert "diff --git a/src/b.py b/src/b.py" in validated.patches[0].patch_diff
+
+
+
+
+
+
 

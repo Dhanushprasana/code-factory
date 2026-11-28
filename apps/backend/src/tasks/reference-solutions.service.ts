@@ -627,8 +627,11 @@ export class ReferenceSolutionsService {
         const queryText = [
           typeof task.title === 'string' ? task.title : '',
           typeof task.description === 'string' ? task.description : '',
+          typeof task.proposedPublicApi === 'string' ? task.proposedPublicApi : '',
+          typeof task.proposed_public_api === 'string' ? task.proposed_public_api : '',
           ...(Array.isArray(task.requirements) ? task.requirements.filter((v): v is string => typeof v === 'string') : []),
           ...(Array.isArray(task.acceptanceCriteria) ? task.acceptanceCriteria.filter((v): v is string => typeof v === 'string') : []),
+          ...(Array.isArray(task.affectedModules) ? task.affectedModules.filter((v): v is string => typeof v === 'string') : []),
         ]
           .filter(Boolean)
           .join(' ');

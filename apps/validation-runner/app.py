@@ -604,6 +604,9 @@ def _append_bounded(current: bytearray, chunk: bytes, max_bytes: int = MAX_LOG_B
 
 def _run_command(container, command: CommandSpec, phase: str, repository_id: str, venv_path: str) -> dict:
     _validate_command(command)
+    command_args = command.args
+    if command_args[0] == "pnpm":
+        command_args = ["corepack", "pnpm@9.15.0", *command_args[1:]]
     started_at = datetime.now(timezone.utc)
     started = time.monotonic()
     stdout = bytearray()
@@ -614,7 +617,7 @@ def _run_command(container, command: CommandSpec, phase: str, repository_id: str
     try:
         created = container.client.api.exec_create(
             container.id,
-            cmd=["timeout", "--signal=TERM", "--kill-after=5s", f"{COMMAND_TIMEOUT_SECONDS}s", *command.args],
+            cmd=["timeout", "--signal=TERM", "--kill-after=5s", f"{COMMAND_TIMEOUT_SECONDS}s", *command_args],
             stdout=True,
             stderr=True,
             tty=False,
@@ -626,6 +629,8 @@ def _run_command(container, command: CommandSpec, phase: str, repository_id: str
                 "TMPDIR": "/tmp",
                 "NPM_CONFIG_CACHE": "/tmp/npm-cache",
                 "PIP_CACHE_DIR": "/tmp/pip-cache",
+                "COREPACK_ENABLE_PROJECT_SPEC": "0",
+                "COREPACK_HOME": "/home/node/.cache/corepack",
                 "PATH": f"{venv_path}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             },
         )

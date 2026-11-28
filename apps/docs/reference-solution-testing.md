@@ -61,6 +61,8 @@ The container uses `code-factory-validation:local` and includes:
 - Gradle
 - Make
 
+Validation invokes the image-pinned pnpm 9.15.0 directly through Corepack so malformed or unsupported `packageManager` declarations cannot redirect pnpm selection. The Corepack cache is stored under `/home/node/.cache/corepack` on the writable image filesystem rather than the temporary workspace.
+
 The container runs as an unprivileged `node` user. Its `/workspace` repository is stored on a temporary 4 GiB tmpfs volume that is removed after the run. `/tmp` is size-limited and no host repository, credential file, Docker socket, or application secret is mounted into the container.
 
 The container has:

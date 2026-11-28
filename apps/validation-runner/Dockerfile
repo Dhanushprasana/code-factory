@@ -23,10 +23,12 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+ENV COREPACK_HOME=/home/node/.cache/corepack
 COPY apps/validation-runner/requirements.txt /tmp/runner-requirements.txt
 RUN corepack enable \
     && corepack prepare pnpm@9.15.0 --activate \
     && corepack prepare yarn@1.22.22 --activate \
+    && chown -R node:node /home/node/.cache/corepack \
     && python3 -m venv /opt/runner-venv --system-site-packages \
     && /opt/runner-venv/bin/pip install --no-cache-dir -r /tmp/runner-requirements.txt
 
