@@ -22,11 +22,7 @@ else
   echo "Docker socket: NOT MOUNTED"
 fi
 
-echo "Harbor container ready."
+echo "Harbor container ready. Starting HTTP runner on :8020..."
 echo "=========================================="
 
-trap 'exit 0' TERM INT
-while true; do
-  sleep 3600 &
-  wait $!
-done
+exec uvicorn server:app --host 0.0.0.0 --port 8020

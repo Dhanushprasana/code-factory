@@ -24,12 +24,8 @@ import {
   Trophy,
   X,
 } from 'lucide-react';
-import {
-  createHarborRunEntries,
-  LeaderboardPage,
-  loadHarborRuns,
-  saveHarborRuns,
-} from './components/LeaderboardPage';
+import { LeaderboardPage } from './components/LeaderboardPage';
+import { HARBOR_INSTALLED_AGENTS } from './components/harborAgents';
 import {
   type ReferenceArtifactsData,
   type ReferenceFileChange,
@@ -1287,23 +1283,26 @@ function SettingsPage() {
   const readyCount = agents.filter(a => a.status === 'ready').length;
   const offlineCount = agents.filter(a => a.status !== 'ready').length;
 
-  const handleRunHarbor = (targetAgent?: Agent) => {
+  const handleRunHarbor = async (targetAgent?: Agent) => {
     setError('');
-    const targets = targetAgent
-      ? [targetAgent]
-      : agents.filter(a => a.status === 'ready');
-    if (targets.length === 0) {
-      setError('No ready agents available to run Harbor.');
-      return;
+    setNotice('');
+    try {
+      const started = await request<Array<{ agentName: string }>>(`${apiUrl}/harbor/run`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          agentId: targetAgent ? targetAgent.id : 'all',
+          packageId: 'all',
+        }),
+      });
+      setNotice(
+        targetAgent
+          ? `Started Harbor evaluation for "${targetAgent.name}". View live status on the Leaderboard.`
+          : `Started Harbor evaluation across ${started.length} ready agent(s). View live status on the Leaderboard.`,
+      );
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Failed to start Harbor evaluation.');
     }
-    const existing = loadHarborRuns();
-    const created = createHarborRunEntries(targets, null);
-    saveHarborRuns([...created, ...existing]);
-    setNotice(
-      targetAgent
-        ? `Queued Harbor evaluation for "${targetAgent.name}". View progress on the Leaderboard.`
-        : `Queued Harbor evaluation across ${targets.length} ready agent(s). View progress on the Leaderboard.`,
-    );
   };
 
   return (
@@ -1442,6 +1441,9 @@ function SettingsPage() {
                             <div className="agent-tags">
                               <span className="tag-badge provider">{agent.provider}</span>
                               <span className="tag-badge adapter">{agent.adapterType}</span>
+                              {agent.settings?.harborAgent && (
+                                <span className="tag-badge">{agent.settings.harborAgent}</span>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -1540,19 +1542,35 @@ function AgentModal({
   onSaved: () => void;
 }) {
   const isEdit = Boolean(agent);
-  const [name, setName] = useState(agent?.name ?? '');
-  const [provider, setProvider] = useState(agent?.provider ?? 'Anthropic');
-  const [adapterType, setAdapterType] = useState(agent?.adapterType ?? 'direct-cli');
-  const [modelName, setModelName] = useState(agent?.modelName ?? 'claude-3-7-sonnet');
+  const initialHarborAgent = agent?.settings?.harborAgent ?? HARBOR_INSTALLED_AGENTS[0].harborName;
+  const [harborAgent, setHarborAgent] = useState(initialHarborAgent);
+  const [name, setName] = useState(agent?.name ?? HARBOR_INSTALLED_AGENTS[0].label);
+  const [provider, setProvider] = useState(agent?.provider ?? HARBOR_INSTALLED_AGENTS[0].defaultProvider);
+  const [adapterType, setAdapterType] = useState(agent?.adapterType ?? 'harbor');
+  const [modelName, setModelName] = useState(agent?.modelName ?? HARBOR_INSTALLED_AGENTS[0].defaultModel);
   const [status, setStatus] = useState(agent?.status ?? 'ready');
   const [description, setDescription] = useState(agent?.description ?? '');
-  const [executionMode, setExecutionMode] = useState(agent?.settings?.executionMode ?? 'docker-sandbox');
+  const [executionMode, setExecutionMode] = useState(agent?.settings?.executionMode ?? 'harbor-bridge');
   const [timeoutMinutes, setTimeoutMinutes] = useState(agent?.settings?.timeoutMinutes ?? 25);
   const [apiKey, setApiKey] = useState(agent?.settings?.apiKey ?? '');
   const [showApiKey, setShowApiKey] = useState(false);
-  const [credentialReference, setCredentialReference] = useState(agent?.credentialReference ?? '');
+  const [credentialReference, setCredentialReference] = useState(
+    agent?.credentialReference ?? HARBOR_INSTALLED_AGENTS[0].defaultApiKeyEnv,
+  );
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+
+  const handleHarborAgentSelect = (nextSlug: string) => {
+    setHarborAgent(nextSlug);
+    const spec = HARBOR_INSTALLED_AGENTS.find(item => item.harborName === nextSlug);
+    if (!spec) return;
+    setName(spec.label);
+    setProvider(spec.defaultProvider);
+    setModelName(spec.defaultModel);
+    setAdapterType('harbor');
+    setExecutionMode('harbor-bridge');
+    setCredentialReference(spec.defaultApiKeyEnv);
+  };
 
   const handleSubmit = async () => {
     if (!name.trim()) {
@@ -1573,6 +1591,7 @@ function AgentModal({
       credentialReference: credentialReference.trim() || null,
       settings: {
         ...(agent?.settings || {}),
+        harborAgent: harborAgent.trim() || undefined,
         executionMode,
         timeoutMinutes: Number(timeoutMinutes) || 25,
         ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
@@ -1622,6 +1641,21 @@ function AgentModal({
         </div>
 
         <label>
+          Harbor Official Agent (<code>--agent</code>)
+          <select
+            value={harborAgent}
+            onChange={e => handleHarborAgentSelect(e.target.value)}
+          >
+            {HARBOR_INSTALLED_AGENTS.map(item => (
+              <option key={item.harborName} value={item.harborName}>
+                {item.label} ({item.harborName})
+              </option>
+            ))}
+            <option value="custom">Custom / Unlisted</option>
+          </select>
+        </label>
+
+        <label>
           Agent Name *
           <input
             value={name}
@@ -1642,14 +1676,11 @@ function AgentModal({
         <div className="field-grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <label style={{ margin: 0, marginTop: 12 }}>
             Provider
-            <select value={provider} onChange={e => setProvider(e.target.value)}>
-              <option value="Anthropic">Anthropic</option>
-              <option value="OpenAI">OpenAI</option>
-              <option value="Google DeepMind">Google DeepMind</option>
-              <option value="Google">Google</option>
-              <option value="Self-Hosted">Self-Hosted</option>
-              <option value="Custom">Custom</option>
-            </select>
+            <input
+              value={provider}
+              onChange={e => setProvider(e.target.value)}
+              placeholder="e.g. Anthropic, OpenAI, Google, OpenRouter"
+            />
           </label>
 
           <label style={{ margin: 0, marginTop: 12 }}>

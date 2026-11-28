@@ -39,6 +39,15 @@ export class AgentsService {
       throw new BadRequestException('Agent name is required.');
     }
 
+    const settings = input.settings || {};
+    if (
+      typeof settings.harborAgent === 'string'
+      && settings.harborAgent.trim()
+      && !/^[a-z0-9][a-z0-9-]*$/.test(settings.harborAgent.trim())
+    ) {
+      throw new BadRequestException('Invalid Harbor agent identifier.');
+    }
+
     const agent = this.agentRepo.create({
       name,
       adapterType: input.adapterType?.trim() || 'direct-cli',
@@ -46,7 +55,7 @@ export class AgentsService {
       description: input.description?.trim() || '',
       status: input.status?.trim() || 'ready',
       modelName: input.modelName?.trim() || '',
-      settings: input.settings || {},
+      settings,
       credentialReference: input.credentialReference || null,
     });
 

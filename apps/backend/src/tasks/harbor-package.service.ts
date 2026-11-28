@@ -316,6 +316,7 @@ export class HarborPackageService {
       '',
       '[verifier]',
       'timeout_sec = 1800.0',
+      'environment_mode = "shared"',
       '',
       '[agent]',
       'timeout_sec = 1800.0',

@@ -127,6 +127,7 @@ services:
       AI_SERVICE_URL: http://ai-service:8000
       ARTIFACT_STORAGE_PATH: storage
       VALIDATION_RUNNER_URL: http://validation-runner:8010
+      HARBOR_RUNNER_URL: http://harbor:8020
       VALIDATION_RUNNER_TOKEN: ${VALIDATION_RUNNER_TOKEN:-local-validation-runner-token}
       REFERENCE_VALIDATION_ALLOW_NETWORK: ${REFERENCE_VALIDATION_ALLOW_NETWORK:-true}
     depends_on:

@@ -11,22 +11,27 @@ export interface HarborAgentSummary {
   settings?: Record<string, any> | null;
 }
 
-export interface HarborTaskSummary {
-  id: string;
+export interface HarborPackageItem {
+  packageId: string;
+  taskId: string;
+  taskVersion: number;
   title: string;
-  category?: string;
-  difficulty?: string;
-  status?: string;
+  category: string;
+  difficulty: string;
+  status: string;
+  fileCount: number;
+  createdAt: string;
 }
 
 export interface HarborRunEntry {
   id: string;
+  jobId: string;
   agentId: string;
   agentName: string;
   provider: string;
-  adapterType: string;
+  harborAgent: string;
   modelName: string;
-  taskId: string | null;
+  packageId: string | null;
   taskTitle: string;
   status: 'queued' | 'running' | 'passed' | 'failed';
   passedTasks: number;
@@ -34,50 +39,8 @@ export interface HarborRunEntry {
   score: number;
   durationSeconds: number;
   startedAt: string;
-}
-
-const HARBOR_RUNS_STORAGE_KEY = 'forgebench_harbor_runs_v1';
-
-export function loadHarborRuns(): HarborRunEntry[] {
-  try {
-    const raw = window.localStorage.getItem(HARBOR_RUNS_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-export function saveHarborRuns(runs: HarborRunEntry[]): void {
-  try {
-    window.localStorage.setItem(HARBOR_RUNS_STORAGE_KEY, JSON.stringify(runs.slice(0, 100)));
-  } catch {
-    // Ignore storage quota errors in restricted environments.
-  }
-}
-
-export function createHarborRunEntries(
-  targetAgents: HarborAgentSummary[],
-  task: HarborTaskSummary | null,
-): HarborRunEntry[] {
-  const now = new Date().toISOString();
-  return targetAgents.map((agent, index) => ({
-    id: `harbor-${Date.now()}-${index}-${agent.id.slice(0, 6)}`,
-    agentId: agent.id,
-    agentName: agent.name,
-    provider: agent.provider,
-    adapterType: agent.adapterType,
-    modelName: agent.modelName || 'unassigned',
-    taskId: task?.id ?? null,
-    taskTitle: task?.title ?? 'All benchmark tasks',
-    status: 'queued',
-    passedTasks: 0,
-    totalTasks: 1,
-    score: 0,
-    durationSeconds: 0,
-    startedAt: now,
-  }));
+  finishedAt?: string | null;
+  error?: string | null;
 }
 
 export function LeaderboardPage({
@@ -86,28 +49,31 @@ export function LeaderboardPage({
   apiUrl: string;
 }) {
   const [agents, setAgents] = useState<HarborAgentSummary[]>([]);
-  const [tasks, setTasks] = useState<HarborTaskSummary[]>([]);
-  const [runs, setRuns] = useState<HarborRunEntry[]>(() => loadHarborRuns());
+  const [packages, setPackages] = useState<HarborPackageItem[]>([]);
+  const [runs, setRuns] = useState<HarborRunEntry[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string>('all');
-  const [selectedTaskId, setSelectedTaskId] = useState<string>('all');
+  const [selectedPackageId, setSelectedPackageId] = useState<string>('all');
   const [loading, setLoading] = useState(true);
+  const [runningRequest, setRunningRequest] = useState(false);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
 
-  const loadData = async () => {
-    setLoading(true);
+  const loadData = async (silent = false) => {
+    if (!silent) setLoading(true);
     setError('');
     try {
-      const [agentsRes, tasksRes] = await Promise.all([
+      const [agentsRes, packagesRes, runsRes] = await Promise.all([
         fetch(`${apiUrl}/agents`).then(r => (r.ok ? r.json() : [])),
-        fetch(`${apiUrl}/tasks`).then(r => (r.ok ? r.json() : [])),
+        fetch(`${apiUrl}/harbor-packages`).then(r => (r.ok ? r.json() : [])),
+        fetch(`${apiUrl}/harbor/runs`).then(r => (r.ok ? r.json() : [])),
       ]);
       setAgents(Array.isArray(agentsRes) ? agentsRes : []);
-      setTasks(Array.isArray(tasksRes) ? tasksRes : []);
+      setPackages(Array.isArray(packagesRes) ? packagesRes : []);
+      setRuns(Array.isArray(runsRes) ? runsRes : []);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Could not load agents or tasks.');
+      setError(reason instanceof Error ? reason.message : 'Could not load leaderboard data.');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -115,35 +81,46 @@ export function LeaderboardPage({
     loadData();
   }, [apiUrl]);
 
-  const handleRunHarbor = (agentIdOverride?: string) => {
-    setError('');
-    const targetId = agentIdOverride ?? selectedAgentId;
-    const targetAgents = targetId === 'all'
-      ? agents.filter(a => a.status === 'ready')
-      : agents.filter(a => a.id === targetId);
-
-    if (targetAgents.length === 0) {
-      setError(
-        targetId === 'all'
-          ? 'No ready agents found. Register or set an agent to Ready in Settings first.'
-          : 'Selected agent was not found.',
-      );
+  useEffect(() => {
+    if (!runs.some(r => r.status === 'running' || r.status === 'queued')) {
       return;
     }
+    const timer = window.setInterval(() => {
+      void loadData(true);
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [runs, apiUrl]);
 
-    const task = selectedTaskId === 'all'
-      ? null
-      : tasks.find(t => t.id === selectedTaskId) ?? null;
-
-    const newEntries = createHarborRunEntries(targetAgents, task);
-    const updated = [...newEntries, ...runs].slice(0, 100);
-    setRuns(updated);
-    saveHarborRuns(updated);
-    setNotice(
-      targetId === 'all'
-        ? `Queued Harbor evaluation across ${targetAgents.length} ready agent(s).`
-        : `Queued Harbor evaluation for "${targetAgents[0].name}".`,
-    );
+  const handleRunHarbor = async (agentIdOverride?: string) => {
+    setError('');
+    setNotice('');
+    setRunningRequest(true);
+    const targetId = agentIdOverride ?? selectedAgentId;
+    try {
+      const res = await fetch(`${apiUrl}/harbor/run`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          agentId: targetId,
+          packageId: selectedPackageId,
+        }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(body?.message ?? `Failed to start Harbor run (${res.status}).`);
+      }
+      const started = Array.isArray(body) ? (body as HarborRunEntry[]) : [];
+      setRuns(prev => [...started, ...prev]);
+      setNotice(
+        targetId === 'all'
+          ? `Started Harbor evaluation across ${started.length} ready agent(s).`
+          : `Started Harbor evaluation for "${started[0]?.agentName ?? 'selected agent'}".`,
+      );
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not start Harbor run.');
+    } finally {
+      setRunningRequest(false);
+    }
   };
 
   const leaderboardRows = useMemo(() => {
@@ -194,16 +171,16 @@ export function LeaderboardPage({
           <h1>Agent Leaderboard</h1>
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
-          <button type="button" className="secondary-button" onClick={loadData} disabled={loading}>
+          <button type="button" className="secondary-button" onClick={() => loadData()} disabled={loading}>
             <RefreshCw size={15} /> Refresh
           </button>
           <button
             type="button"
             className="primary-button"
             onClick={() => handleRunHarbor('all')}
-            disabled={readyCount === 0}
+            disabled={readyCount === 0 || packages.length === 0 || runningRequest}
           >
-            <Play size={15} /> Run Harbor (All Ready Agents)
+            <Play size={15} /> {runningRequest ? 'Starting…' : 'Run Harbor (All Ready Agents)'}
           </button>
         </div>
       </div>
@@ -220,7 +197,7 @@ export function LeaderboardPage({
         <div className="metric-card">
           <span>Harbor Runs</span>
           <strong>{runs.length}</strong>
-          <small>Queued &amp; recorded evaluations</small>
+          <small>Persisted in Harbor volume</small>
         </div>
         <div className="metric-card">
           <span>Top Pass Rate</span>
@@ -228,9 +205,9 @@ export function LeaderboardPage({
           <small>Highest average score</small>
         </div>
         <div className="metric-card">
-          <span>Available Tasks</span>
-          <strong>{tasks.length}</strong>
-          <small>Saved benchmark tasks</small>
+          <span>Finalized Packages</span>
+          <strong>{packages.length}</strong>
+          <small>Ready Harbor packages</small>
         </div>
       </div>
 
@@ -254,12 +231,12 @@ export function LeaderboardPage({
             </select>
           </label>
           <label>
-            Benchmark Task
-            <select value={selectedTaskId} onChange={e => setSelectedTaskId(e.target.value)}>
-              <option value="all">All Saved Tasks ({tasks.length})</option>
-              {tasks.map(task => (
-                <option key={task.id} value={task.id}>
-                  {task.title}
+            Harbor Package
+            <select value={selectedPackageId} onChange={e => setSelectedPackageId(e.target.value)}>
+              <option value="all">All Finalized Packages ({packages.length})</option>
+              {packages.map(pkg => (
+                <option key={pkg.packageId} value={pkg.packageId}>
+                  {pkg.title} ({pkg.packageId})
                 </option>
               ))}
             </select>
@@ -268,9 +245,9 @@ export function LeaderboardPage({
             type="button"
             className="primary-button"
             onClick={() => handleRunHarbor()}
-            disabled={agents.length === 0}
+            disabled={agents.length === 0 || packages.length === 0 || runningRequest}
           >
-            <Play size={15} /> Run Harbor
+            <Play size={15} /> {runningRequest ? 'Starting…' : 'Run Harbor'}
           </button>
         </div>
       </section>
@@ -297,7 +274,7 @@ export function LeaderboardPage({
                   <th>Rank</th>
                   <th>Agent</th>
                   <th>Model</th>
-                  <th>Adapter</th>
+                  <th>Harbor Agent</th>
                   <th>Runs</th>
                   <th>Pass Rate</th>
                   <th>Avg Duration</th>
@@ -316,7 +293,7 @@ export function LeaderboardPage({
                       </div>
                     </td>
                     <td><code>{row.agent.modelName || 'unassigned'}</code></td>
-                    <td><span className="tag-badge adapter">{row.agent.adapterType}</span></td>
+                    <td><span className="tag-badge adapter">{row.agent.settings?.harborAgent || row.agent.adapterType}</span></td>
                     <td>{row.passedRuns} / {row.totalRuns}</td>
                     <td>
                       <div className="leaderboard-score-cell">
@@ -336,6 +313,7 @@ export function LeaderboardPage({
                       <button
                         type="button"
                         className="secondary-button compact-button"
+                        disabled={packages.length === 0 || runningRequest}
                         onClick={() => handleRunHarbor(row.agent.id)}
                       >
                         <Play size={12} /> Run Harbor
@@ -356,16 +334,6 @@ export function LeaderboardPage({
               <span className="eyebrow">History</span>
               <h2>Recent Harbor Runs</h2>
             </div>
-            <button
-              type="button"
-              className="secondary-button compact-button"
-              onClick={() => {
-                setRuns([]);
-                saveHarborRuns([]);
-              }}
-            >
-              Clear history
-            </button>
           </div>
           <div className="leaderboard-table-wrap">
             <table className="leaderboard-table">
@@ -373,7 +341,9 @@ export function LeaderboardPage({
                 <tr>
                   <th>Agent</th>
                   <th>Model</th>
-                  <th>Task</th>
+                  <th>Package / Task</th>
+                  <th>Score</th>
+                  <th>Duration</th>
                   <th>Status</th>
                   <th>Started</th>
                 </tr>
@@ -384,6 +354,8 @@ export function LeaderboardPage({
                     <td><strong>{run.agentName}</strong></td>
                     <td><code>{run.modelName}</code></td>
                     <td>{run.taskTitle}</td>
+                    <td><strong>{run.score}%</strong></td>
+                    <td>{run.durationSeconds ? `${run.durationSeconds}s` : '—'}</td>
                     <td><span className={`status ${run.status === 'passed' ? 'green' : run.status === 'failed' ? 'amber' : 'gray'}`}>{run.status}</span></td>
                     <td>{new Date(run.startedAt).toLocaleString()}</td>
                   </tr>

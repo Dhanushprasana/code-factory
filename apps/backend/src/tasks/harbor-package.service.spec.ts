@@ -82,6 +82,9 @@ describe('HarborPackageService', () => {
         ]),
       );
 
+      const taskToml = details.files.find((f) => f.path === 'task.toml')?.content ?? '';
+      expect(taskToml).toContain('environment_mode = "shared"');
+
       const list = await service.listPackages();
       expect(list).toHaveLength(1);
       expect(list[0].packageId).toBe('task-123-v1');

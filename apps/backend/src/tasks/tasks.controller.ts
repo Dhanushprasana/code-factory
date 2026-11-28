@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { createReadStream, promises as fs } from 'fs';
 import { HarborPackageService } from './harbor-package.service';
+import { HarborRunnerService } from './harbor-runner.service';
 import { ReferenceSolutionsService } from './reference-solutions.service';
 import { TasksService } from './tasks.service';
 
@@ -22,6 +23,7 @@ export class TasksController {
     private readonly tasksService: TasksService,
     private readonly referenceSolutions: ReferenceSolutionsService,
     private readonly harborPackages: HarborPackageService,
+    private readonly harborRunner: HarborRunnerService,
   ) {}
 
   @Get('projects/:id/task-context')
@@ -135,5 +137,15 @@ export class TasksController {
   @Get('harbor-packages/:packageId')
   getPackage(@Param('packageId') packageId: string) {
     return this.harborPackages.getPackageDetails(packageId);
+  }
+
+  @Get('harbor/runs')
+  listHarborRuns() {
+    return this.harborRunner.listRuns();
+  }
+
+  @Post('harbor/run')
+  startHarborRun(@Body() body: { agentId?: string; packageId?: string } = {}) {
+    return this.harborRunner.startRun(body);
   }
 }
