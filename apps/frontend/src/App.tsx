@@ -2,21 +2,34 @@ import { useEffect, useMemo, useState } from 'react';
 import { Navigate, NavLink, Route, Routes, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   Boxes,
+  CheckCircle2,
   ClipboardList,
   ChevronRight,
   CircleGauge,
   Edit2,
+  Eye,
+  EyeOff,
+  FileCode2,
   FolderKanban,
   GitBranch,
   History,
+  KeyRound,
+  Play,
   Plus,
   Power,
   RefreshCw,
   Settings,
   Sparkles,
   Trash2,
+  Trophy,
   X,
 } from 'lucide-react';
+import {
+  createHarborRunEntries,
+  LeaderboardPage,
+  loadHarborRuns,
+  saveHarborRuns,
+} from './components/LeaderboardPage';
 import {
   type ReferenceArtifactsData,
   type ReferenceFileChange,
@@ -29,6 +42,7 @@ const nav = [
   { to: '/projects', label: 'Projects', icon: FolderKanban },
   { to: '/tasks/new', label: 'Task generator', icon: Sparkles },
   { to: '/tasks', label: 'Task library', icon: ClipboardList },
+  { to: '/leaderboard', label: 'Leaderboard', icon: Trophy },
   { to: '/settings', label: 'Settings', icon: Settings },
   { to: '/analysis', label: 'Repository Analysis', icon: GitBranch },
 ];
@@ -37,11 +51,20 @@ const apiUrl = 'http://127.0.0.1:4000/api/v1';
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
+  const text = await response.text();
   if (!response.ok) {
-    const body = await response.json().catch(() => null);
+    let body: { message?: string } | null = null;
+    try {
+      body = text ? JSON.parse(text) : null;
+    } catch {
+      body = null;
+    }
     throw new Error(body?.message ?? `Request failed (${response.status}).`);
   }
-  return response.json();
+  if (!text) {
+    return undefined as T;
+  }
+  return JSON.parse(text) as T;
 }
 
 type ProjectOption = { id: string; name: string };
@@ -287,6 +310,7 @@ function Shell() {
           <Route path="/tasks/new" element={<TaskGeneratorPage />} />
           <Route path="/tasks/:taskId" element={<TaskLibraryPage />} />
           <Route path="/tasks" element={<TaskLibraryPage />} />
+          <Route path="/leaderboard" element={<LeaderboardPage apiUrl={apiUrl} />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/analysis" element={<AnalysisPage />} />
           <Route path="/analysis/:analysisId" element={<AnalysisPage />} />
@@ -1263,21 +1287,50 @@ function SettingsPage() {
   const readyCount = agents.filter(a => a.status === 'ready').length;
   const offlineCount = agents.filter(a => a.status !== 'ready').length;
 
+  const handleRunHarbor = (targetAgent?: Agent) => {
+    setError('');
+    const targets = targetAgent
+      ? [targetAgent]
+      : agents.filter(a => a.status === 'ready');
+    if (targets.length === 0) {
+      setError('No ready agents available to run Harbor.');
+      return;
+    }
+    const existing = loadHarborRuns();
+    const created = createHarborRunEntries(targets, null);
+    saveHarborRuns([...created, ...existing]);
+    setNotice(
+      targetAgent
+        ? `Queued Harbor evaluation for "${targetAgent.name}". View progress on the Leaderboard.`
+        : `Queued Harbor evaluation across ${targets.length} ready agent(s). View progress on the Leaderboard.`,
+    );
+  };
+
   return (
     <div className="page">
       <PageHeader
         eyebrow="Configuration & Runtime"
         title="Settings & Agent Management"
         action={
-          <button
-            className="primary-button"
-            onClick={() => {
-              setEditingAgent(null);
-              setModalOpen(true);
-            }}
-          >
-            <Plus size={17} /> Register agent
-          </button>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button
+              className="secondary-button"
+              onClick={() => handleRunHarbor()}
+              disabled={readyCount === 0}
+              title="Run Harbor benchmark across all ready agents"
+            >
+              <Play size={15} /> Run Harbor (All Agents)
+            </button>
+            <button
+              className="primary-button"
+              onClick={() => {
+                setEditingAgent(null);
+                setModalOpen(true);
+              }}
+            >
+              <Plus size={17} /> Register agent
+            </button>
+          </div>
         }
       />
 
@@ -1407,20 +1460,31 @@ function SettingsPage() {
                         <span>Model: <strong>{agent.modelName || 'unassigned'}</strong></span>
                         <span>Config: <strong>v{agent.configs?.length || 1}</strong></span>
                         <span>Mode: <strong>{agent.settings?.executionMode || 'docker-sandbox'}</strong></span>
+                        <span>API Key: <strong>{agent.settings?.apiKey ? 'Configured' : 'Not set'}</strong></span>
                         {agent.settings?.timeoutMinutes && (
                           <span>Timeout: <strong>{agent.settings.timeoutMinutes}m</strong></span>
                         )}
                       </div>
 
                       <div className="agent-card-actions">
-                        <button
-                          className={`secondary-button ${isReady ? '' : 'primary-button'}`}
-                          style={{ height: 32, fontSize: 12, padding: '0 10px' }}
-                          onClick={() => handleToggleStatus(agent)}
-                        >
-                          <Power size={13} />
-                          {isReady ? 'Set Offline' : 'Set Ready'}
-                        </button>
+                        <div className="action-group">
+                          <button
+                            className={`secondary-button ${isReady ? '' : 'primary-button'}`}
+                            style={{ height: 32, fontSize: 12, padding: '0 10px' }}
+                            onClick={() => handleToggleStatus(agent)}
+                          >
+                            <Power size={13} />
+                            {isReady ? 'Set Offline' : 'Set Ready'}
+                          </button>
+                          <button
+                            className="secondary-button"
+                            style={{ height: 32, fontSize: 12, padding: '0 10px' }}
+                            onClick={() => handleRunHarbor(agent)}
+                            title={`Run Harbor for ${agent.name}`}
+                          >
+                            <Play size={13} /> Run Harbor
+                          </button>
+                        </div>
 
                         <div className="action-group">
                           <button
@@ -1484,6 +1548,8 @@ function AgentModal({
   const [description, setDescription] = useState(agent?.description ?? '');
   const [executionMode, setExecutionMode] = useState(agent?.settings?.executionMode ?? 'docker-sandbox');
   const [timeoutMinutes, setTimeoutMinutes] = useState(agent?.settings?.timeoutMinutes ?? 25);
+  const [apiKey, setApiKey] = useState(agent?.settings?.apiKey ?? '');
+  const [showApiKey, setShowApiKey] = useState(false);
   const [credentialReference, setCredentialReference] = useState(agent?.credentialReference ?? '');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -1509,6 +1575,7 @@ function AgentModal({
         ...(agent?.settings || {}),
         executionMode,
         timeoutMinutes: Number(timeoutMinutes) || 25,
+        ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
       },
     };
 
@@ -1647,11 +1714,34 @@ function AgentModal({
         </div>
 
         <label>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <KeyRound size={13} /> API Key
+          </span>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input
+              type={showApiKey ? 'text' : 'password'}
+              value={apiKey}
+              onChange={e => setApiKey(e.target.value)}
+              placeholder={isEdit && agent?.settings?.apiKey ? '•••••••• (leave as-is or replace)' : 'sk-...'}
+              autoComplete="off"
+            />
+            <button
+              type="button"
+              className="secondary-button compact-button"
+              onClick={() => setShowApiKey(prev => !prev)}
+              aria-label={showApiKey ? 'Hide API key' : 'Show API key'}
+            >
+              {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
+            </button>
+          </div>
+        </label>
+
+        <label>
           Credential / Secret Reference (Optional)
           <input
             value={credentialReference}
             onChange={e => setCredentialReference(e.target.value)}
-            placeholder="e.g. ENV_AGENT_API_KEY (never plain secrets)"
+            placeholder="e.g. ENV_AGENT_API_KEY"
           />
         </label>
 
@@ -2073,6 +2163,28 @@ function TaskLibraryPage() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [saving, setSaving] = useState(false);
+  const [libraryTab, setLibraryTab] = useState<'drafts' | 'packages'>('drafts');
+  const [packages, setPackages] = useState<Array<{
+    packageId: string;
+    taskId: string;
+    taskVersion: number;
+    title: string;
+    category: string;
+    difficulty: string;
+    status: string;
+    fileCount: number;
+    createdAt: string;
+  }>>([]);
+  const [selectedPackageId, setSelectedPackageId] = useState('');
+  const [selectedPackageDetail, setSelectedPackageDetail] = useState<{
+    packageId: string;
+    title: string;
+    category: string;
+    difficulty: string;
+    files: Array<{ path: string; size: number; content: string }>;
+  } | null>(null);
+  const [selectedPackageFile, setSelectedPackageFile] = useState('');
+  const [finalizing, setFinalizing] = useState(false);
 
   useEffect(() => {
     request<ProjectOption[]>(`${apiUrl}/projects`).then(setProjects)
@@ -2083,6 +2195,36 @@ function TaskLibraryPage() {
     request<SavedTask[]>(url).then(setTasks)
       .catch(reason => setError(reason instanceof Error ? reason.message : 'Could not load tasks.'));
   }, [projectId]);
+  const loadPackages = () => {
+    request<typeof packages>(`${apiUrl}/harbor-packages`)
+      .then(items => {
+        setPackages(items);
+        if (items.length && !selectedPackageId) {
+          setSelectedPackageId(items[0].packageId);
+        }
+      })
+      .catch(reason => setError(reason instanceof Error ? reason.message : 'Could not load Harbor packages.'));
+  };
+  useEffect(() => {
+    loadPackages();
+  }, []);
+  useEffect(() => {
+    if (libraryTab === 'packages') {
+      loadPackages();
+    }
+  }, [libraryTab]);
+  useEffect(() => {
+    if (libraryTab !== 'packages' || !selectedPackageId) {
+      setSelectedPackageDetail(null);
+      return;
+    }
+    request<NonNullable<typeof selectedPackageDetail>>(`${apiUrl}/harbor-packages/${selectedPackageId}`)
+      .then(detail => {
+        setSelectedPackageDetail(detail);
+        setSelectedPackageFile(detail.files[0]?.path ?? '');
+      })
+      .catch(reason => setError(reason instanceof Error ? reason.message : 'Could not load package files.'));
+  }, [libraryTab, selectedPackageId]);
   useEffect(() => {
     if (!taskId) {
       setTask(null);
@@ -2265,18 +2407,147 @@ function TaskLibraryPage() {
     }
   };
 
+  const finalizeTaskPackage = async () => {
+    if (!task || !selectedReference || selectedReference.status !== 'approved') return;
+    setFinalizing(true);
+    setError('');
+    setNotice('');
+    try {
+      const pkg = await request<{ packageId: string }>(`${apiUrl}/tasks/${task.id}/finalize`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ referenceId: selectedReference.id }),
+      });
+      setTasks(current => current.map(item => (item.id === task.id ? { ...item, status: 'finalized' } : item)));
+      setTask(current => (current ? { ...current, status: 'finalized' } : current));
+      setSelectedPackageId(pkg.packageId);
+      setLibraryTab('packages');
+      loadPackages();
+      setNotice(`Harbor package "${pkg.packageId}" created and stored in the Harbor volume.`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not finalize Harbor package.');
+    } finally {
+      setFinalizing(false);
+    }
+  };
+
+  const draftTasks = tasks.filter(item => item.status !== 'finalized');
+
   return <div className="page task-library-page">
-    <PageHeader eyebrow="Task workbench" title={task ? 'Task review' : 'Task library'} action={<button className="primary-button" onClick={() => navigate('/tasks/new')}><Sparkles size={15} /> New task</button>} />
+    <PageHeader eyebrow="Task workbench" title={libraryTab === 'packages' ? 'Harbor packages' : task ? 'Task review' : 'Task library'} action={<button className="primary-button" onClick={() => navigate('/tasks/new')}><Sparkles size={15} /> New task</button>} />
     {error && <div className="inline-notice error" role="alert">{error}</div>}
     {notice && <div className="inline-notice" role="status">{notice}</div>}
-    <div className="project-picker"><label htmlFor="task-library-project">Project</label><select id="task-library-project" value={projectId} onChange={event => { setProjectId(event.target.value); if (taskId) navigate('/tasks'); }}><option value="">All projects</option>{projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></div>
+    <div className="filter-bar" style={{ marginBottom: 12 }}>
+      <div className="filter-pills" role="tablist" aria-label="Task library view">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={libraryTab === 'drafts'}
+          className={`pill-button ${libraryTab === 'drafts' ? 'active' : ''}`}
+          onClick={() => setLibraryTab('drafts')}
+        >
+          Drafts ({draftTasks.length})
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={libraryTab === 'packages'}
+          className={`pill-button ${libraryTab === 'packages' ? 'active' : ''}`}
+          onClick={() => setLibraryTab('packages')}
+        >
+          <Boxes size={14} style={{ verticalAlign: 'text-bottom', marginRight: 5 }} />
+          Packages ({packages.length})
+        </button>
+      </div>
+      {libraryTab === 'drafts' && (
+        <div className="project-picker" style={{ margin: 0 }}><label htmlFor="task-library-project">Project</label><select id="task-library-project" value={projectId} onChange={event => { setProjectId(event.target.value); if (taskId) navigate('/tasks'); }}><option value="">All projects</option>{projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></div>
+      )}
+    </div>
+
+    {libraryTab === 'packages' ? (
+      <div className="task-library-layout">
+        <section className="panel task-list-panel">
+          <div className="panel-head"><div><span className="eyebrow">Finalized Harbor Packages</span><h2>{packages.length} package{packages.length === 1 ? '' : 's'}</h2></div></div>
+          {packages.length ? packages.map(pkg => (
+            <button
+              type="button"
+              key={pkg.packageId}
+              className={`task-library-row ${selectedPackageId === pkg.packageId ? 'selected' : ''}`}
+              onClick={() => setSelectedPackageId(pkg.packageId)}
+            >
+              <span>
+                <b>{pkg.title}</b>
+                <small>{pkg.packageId} · {(pkg.category ?? 'feature').replaceAll('_', ' ')}</small>
+                <small>{pkg.fileCount} Harbor files</small>
+              </span>
+              <span className="task-row-meta">
+                <span className="status green">finalized</span>
+                <small>v{pkg.taskVersion}</small>
+              </span>
+            </button>
+          )) : (
+            <div className="empty-state compact">
+              No finalized Harbor packages yet. Approve a reference solution in Drafts and click Finalize task.
+            </div>
+          )}
+        </section>
+        <section className="panel task-detail-panel">
+          {!selectedPackageDetail ? (
+            <div className="empty-state"><Boxes size={22} /><h2>Select a package</h2><p>Click a finalized Harbor package on the left to inspect its files.</p></div>
+          ) : (
+            <>
+              <div className="panel-head">
+                <div>
+                  <span className="eyebrow">Harbor Package · {selectedPackageDetail.packageId}</span>
+                  <h2>{selectedPackageDetail.title}</h2>
+                </div>
+                <span className="status green">finalized</span>
+              </div>
+              <div className="package-files-browser">
+                <div className="diff-file-tabs" role="tablist" aria-label="Package files">
+                  {selectedPackageDetail.files.map(file => (
+                    <button
+                      type="button"
+                      role="tab"
+                      key={file.path}
+                      aria-selected={selectedPackageFile === file.path}
+                      className={`diff-file-tab ${selectedPackageFile === file.path ? 'selected' : ''}`}
+                      onClick={() => setSelectedPackageFile(file.path)}
+                    >
+                      <FileCode2 size={13} />
+                      <code>{file.path}</code>
+                    </button>
+                  ))}
+                </div>
+                {(() => {
+                  const activeFile = selectedPackageDetail.files.find(f => f.path === selectedPackageFile) ?? selectedPackageDetail.files[0];
+                  if (!activeFile) return <div className="empty-state compact">No files in package.</div>;
+                  const lines = activeFile.content.replace(/\r\n/g, '\n').split('\n');
+                  return (
+                    <div className="solve-script-viewer" style={{ maxHeight: 540 }}>
+                      {lines.map((line, idx) => (
+                        <div className="solve-script-line" key={idx}>
+                          <span className="solve-line-number">{idx + 1}</span>
+                          <code>{line || ' '}</code>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+            </>
+          )}
+        </section>
+      </div>
+    ) : (
+    <>
     <div className="task-library-layout">
       <section className="panel task-list-panel">
-        <div className="panel-head"><div><span className="eyebrow">Saved task specifications</span><h2>{tasks.length} task{tasks.length === 1 ? '' : 's'}</h2></div></div>
-        {tasks.length ? tasks.map(item => <button type="button" className={`task-library-row ${task?.id === item.id ? 'selected' : ''}`} key={item.id} onClick={() => navigate(`/tasks/${item.id}`)}>
-          <span><b>{item.title}</b><small>{projects.find(project => project.id === item.projectId)?.name ?? 'Project'} · {item.category.replaceAll('_', ' ')}</small><small>{item.baselineManifest.map(base => base.commitSha.slice(0, 10)).join(', ')}</small></span>
+        <div className="panel-head"><div><span className="eyebrow">Saved task drafts</span><h2>{draftTasks.length} draft{draftTasks.length === 1 ? '' : 's'}</h2></div></div>
+        {draftTasks.length ? draftTasks.map(item => <button type="button" className={`task-library-row ${task?.id === item.id ? 'selected' : ''}`} key={item.id} onClick={() => navigate(`/tasks/${item.id}`)}>
+          <span><b>{item.title}</b><small>{projects.find(project => project.id === item.projectId)?.name ?? 'Project'} · {(item.category ?? 'feature').replaceAll('_', ' ')}</small><small>{(item.baselineManifest ?? []).map(base => base.commitSha.slice(0, 10)).join(', ')}</small></span>
           <span className="task-row-meta"><span className={`status ${item.status === 'draft' ? 'amber' : 'gray'}`}>{item.status}</span><small>v{item.currentVersion}</small></span>
-        </button>) : <div className="empty-state compact">No saved tasks yet. Generate and review a task draft to populate the library.</div>}
+        </button>) : <div className="empty-state compact">No draft tasks. Generate a new task or inspect finalized items in the Packages tab.</div>}
       </section>
       <section className="panel task-detail-panel">
         {!task ? <div className="empty-state"><ClipboardList size={22} /><h2>Select a task to review</h2><p>Saved task specifications, source evidence, pinned baselines, and version history appear here.</p></div> : <>
@@ -2321,7 +2592,7 @@ function TaskLibraryPage() {
       {!selectedReference && <div className="empty-state compact">No reference generated yet. Generate one to create a file-by-file plan, patch, and public test files.</div>}
       {selectedReference && <>
         <div className="reference-status-row">
-          <span className={`status ${selectedReference.status === 'approved' ? 'green' : selectedReference.status === 'failed' || selectedReference.status === 'rejected' ? 'amber' : 'gray'}`}>{selectedReference.status.replaceAll('_', ' ')}</span>
+          <span className={`status ${selectedReference.status === 'approved' ? 'green' : selectedReference.status === 'failed' || selectedReference.status === 'rejected' ? 'amber' : 'gray'}`}>{(selectedReference.status ?? 'unknown').replaceAll('_', ' ')}</span>
           <span>Task v{selectedReference.taskVersion} · {selectedReference.provider}{selectedReference.model ? ` · ${selectedReference.model}` : ''} · {new Date(selectedReference.createdAt).toLocaleString()}</span>
         </div>
         {selectedReference.errorMessage && <div className="inline-notice error" role="alert">{selectedReference.errorMessage}</div>}
@@ -2447,6 +2718,17 @@ function TaskLibraryPage() {
                 <button className="secondary-button" disabled={referenceBusy || selectedReference.status !== 'pending_review'} onClick={() => reviewReference('request_changes')}>Request changes</button>
                 <button className="secondary-button" disabled={referenceBusy || selectedReference.status !== 'pending_review'} onClick={() => reviewReference('reject')}>Reject</button>
                 <button className="primary-button" disabled={referenceBusy || selectedReference.status !== 'pending_review' || !workspaceApplied || selectedReference.validation.execution_mode !== 'automatic_container' || selectedReference.validation.build !== 'passed' || selectedReference.validation.tests !== 'passed'} onClick={() => reviewReference('approve')}>Approve reference</button>
+                {selectedReference.status === 'approved' && (
+                  <button
+                    type="button"
+                    className="primary-button"
+                    disabled={finalizing}
+                    onClick={finalizeTaskPackage}
+                  >
+                    <CheckCircle2 size={15} />
+                    {finalizing ? 'Finalizing…' : 'Finalize task'}
+                  </button>
+                )}
               </div>
               {selectedReference.reviewNote && <p className="form-hint">Latest review note: {selectedReference.reviewNote}</p>}
             </section>
@@ -2454,6 +2736,8 @@ function TaskLibraryPage() {
           </>}
       </>}
     </section>}
+    </>
+    )}
   </div>;
 }
 

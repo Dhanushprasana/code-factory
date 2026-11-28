@@ -168,6 +168,22 @@ services:
       timeout: 5s
       retries: 10
 
+  harbor:
+    build:
+      context: .
+      dockerfile: apps/harbor/Dockerfile
+    container_name: forgebench-harbor
+    restart: unless-stopped
+    volumes:
+      - artifacts:/workspace/storage
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD-SHELL", "harbor --version >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
 volumes:
   postgres_data:
   redis_data:

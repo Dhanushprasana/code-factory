@@ -10,6 +10,7 @@ import { ReferenceSolutionEntity } from './entities/reference-solution.entity';
 import { TaskEntity } from './entities/task.entity';
 import { TaskGenerationEntity } from './entities/task-generation.entity';
 import { TaskVersionEntity } from './entities/task-version.entity';
+import { HarborPackageService } from './harbor-package.service';
 import { ReferenceSolutionsProcessor } from './reference-solutions.processor';
 import { ReferenceSolutionsService } from './reference-solutions.service';
 import { TasksController } from './tasks.controller';
@@ -31,6 +32,6 @@ import { TasksService } from './tasks.service';
     ]),
   ],
   controllers: [TasksController],
-  providers: [TasksService, ReferenceSolutionsService, ReferenceSolutionsProcessor],
+  providers: [TasksService, ReferenceSolutionsService, ReferenceSolutionsProcessor, HarborPackageService],
 })
 export class TasksModule {}

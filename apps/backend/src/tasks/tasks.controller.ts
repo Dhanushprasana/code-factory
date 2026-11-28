@@ -10,6 +10,7 @@ import {
   StreamableFile,
 } from '@nestjs/common';
 import { createReadStream, promises as fs } from 'fs';
+import { HarborPackageService } from './harbor-package.service';
 import { ReferenceSolutionsService } from './reference-solutions.service';
 import { TasksService } from './tasks.service';
 
@@ -20,6 +21,7 @@ export class TasksController {
   constructor(
     private readonly tasksService: TasksService,
     private readonly referenceSolutions: ReferenceSolutionsService,
+    private readonly harborPackages: HarborPackageService,
   ) {}
 
   @Get('projects/:id/task-context')
@@ -118,5 +120,20 @@ export class TasksController {
   @Patch('references/:id/review')
   reviewReference(@Param('id') referenceId: string, @Body() body: Record<string, unknown>) {
     return this.referenceSolutions.review(referenceId, body);
+  }
+
+  @Post('tasks/:id/finalize')
+  finalizeTask(@Param('id') taskId: string, @Body() body: { referenceId?: string } = {}) {
+    return this.harborPackages.finalizeTask(taskId, body?.referenceId);
+  }
+
+  @Get('harbor-packages')
+  listPackages() {
+    return this.harborPackages.listPackages();
+  }
+
+  @Get('harbor-packages/:packageId')
+  getPackage(@Param('packageId') packageId: string) {
+    return this.harborPackages.getPackageDetails(packageId);
   }
 }
