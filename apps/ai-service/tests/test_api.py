@@ -497,9 +497,8 @@ def test_reference_generation_uses_task_provider_and_pinned_context(
 ):
     source = tmp_path / "src" / "orders" / "service.py"
     source.parent.mkdir(parents=True)
-    source.write_text(
-        "def create_order(order):\n    return order\n",
-        encoding="utf-8",
+    source.write_bytes(
+        b"def create_order(order):\n    return order\n",
     )
     if repair_context:
         (tmp_path / ".env").write_text("repair-source-secret", encoding="utf-8")
@@ -538,19 +537,17 @@ def test_reference_generation_uses_task_provider_and_pinned_context(
             assert '"status": "excluded-sensitive"' in prompt
             assert "repair-source-secret" not in prompt
         else:
-            assert "diff --git a/<path> b/<path>" in prompt
-            assert "must begin in column 1" in prompt
-            assert "ordered and non-overlapping" in prompt
-            assert "even a blank context line must contain its leading space" in prompt
-            assert "Do not include placeholder changes" in prompt
+            assert "COMPLETE, EXACT contents" in prompt
+            assert "def create_order(order):" in prompt
+            assert "search" in prompt
         assert timeout_seconds == (1200.0 if provider == "ollama" else 90.0)
         if repair_context:
             assert response_schema == reference_factory._patch_repair_response_schema({
                 "src/orders/service.py",
             })
         else:
-            assert response_schema == reference_factory._reference_response_schema({"repository-task-test"})
-            assert response_schema["properties"]["patches"]["items"]["properties"]["repository_id"]["enum"] == [
+            assert response_schema == reference_factory._structured_reference_response_schema({"repository-task-test"})
+            assert response_schema["properties"]["modifications"]["items"]["properties"]["repository_id"]["enum"] == [
                 "repository-task-test",
             ]
         if provider == "ollama":
@@ -578,13 +575,14 @@ def test_reference_generation_uses_task_provider_and_pinned_context(
                 "rationale": "Add explicit validation for order creation.",
                 "steps": ["Validate required fields before storing."],
             }],
-            "patches": [{
+            "modifications": [{
                 "repository_id": "repository-task-test",
-                "patch_diff": (
-                    "diff --git a/src/orders/service.py b/src/orders/service.py\n"
-                    "--- a/src/orders/service.py\n+++ b/src/orders/service.py\n"
-                    "@@ -1,2 +1,3 @@\n def create_order(order):\n+    if not order: raise ValueError('order is required')\n     return order\n"
-                ),
+                "file_path": "src/orders/service.py",
+                "operation": "replace",
+                "description": "Add validation in create_order",
+                "search": "def create_order(order):\n    return order",
+                "replace": "def create_order(order):\n    if not order: raise ValueError('order is required')\n    return order",
+                "position": "after",
             }],
             "tests": [{
                 "repository_id": "repository-task-test",
@@ -660,12 +658,14 @@ def test_reference_generation_uses_task_provider_and_pinned_context(
     assert result["model"] == model
     assert result["status"] == "pending_review"
     assert result["patches"][0]["repository_id"] == "repository-task-test"
-    assert result["prompt_version"] == "reference-factory-v8"
     if repair_context:
+        assert result["prompt_version"] == "reference-factory-v8"
         assert "diff --git a/src/orders/service.py b/src/orders/service.py" in result["patches"][0]["patch_diff"]
         assert "+    if not order:" in result["patches"][0]["patch_diff"]
         assert "implementation_plan" not in result
     else:
+        assert result["prompt_version"] == "reference-factory-v9"
+        assert "solve_script" in result
         assert result["implementation_plan"][0]["file_path"] == "src/orders/service.py"
         assert result["tests"][0]["test_type"] == "feature"
         assert result["validation"]["build"] == "not_run"

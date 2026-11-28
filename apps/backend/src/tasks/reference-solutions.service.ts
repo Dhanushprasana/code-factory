@@ -41,11 +41,22 @@ interface ReferenceGenerationResponse {
   provider: string;
   model: string;
   prompt_version: string;
+  target_files?: string[];
   implementation_plan?: Record<string, unknown>[];
+  modifications?: Record<string, unknown>[];
+  file_changes?: Array<{
+    repository_id: string;
+    file_path: string;
+    operation: string;
+    original_content: string;
+    modified_content: string;
+  }>;
   patches?: GeneratedRepositoryPatch[];
+  solve_script?: string;
   tests?: Record<string, unknown>[];
   context_manifest?: Record<string, unknown>;
   validation?: Record<string, unknown>;
+  error_message?: string;
 }
 
 interface GeneratedRepositoryPatch {
@@ -178,15 +189,34 @@ export class ReferenceSolutionsService {
 
   async listForTask(taskId: string) {
     await this.findTask(taskId);
-    return this.references.find({
+    const items = await this.references.find({
       where: { taskId },
       order: { version: 'DESC' },
       take: 50,
     });
+    return items.map((item) => ({ ...item, fileChanges: null }));
   }
 
   async get(referenceId: string) {
     return this.findReference(referenceId);
+  }
+
+  async getArtifacts(referenceId: string) {
+    const reference = await this.findReference(referenceId);
+    return {
+      id: reference.id,
+      taskId: reference.taskId,
+      taskVersion: reference.taskVersion,
+      version: reference.version,
+      status: reference.status,
+      errorMessage: reference.errorMessage,
+      targetFiles: reference.targetFiles ?? [],
+      modifications: reference.modifications ?? [],
+      fileChanges: reference.fileChanges ?? [],
+      patches: reference.patches ?? [],
+      solveScript: reference.solveScript ?? null,
+      validation: reference.validation ?? {},
+    };
   }
 
   async applyPatches(referenceId: string) {
@@ -327,9 +357,18 @@ export class ReferenceSolutionsService {
             throw new BadRequestException('A generated test file is outside its review workspace.');
           }
           const content = test.content as string;
+          const patchedInRepo = Boolean(
+            patch && (patch.includes(`+++ b/${relativePath}\n`) || patch.includes(`--- a/${relativePath}\n`)),
+          );
           if (fs.existsSync(destination)) {
             const existing = await fs.promises.readFile(destination, 'utf8');
             if (existing !== content) {
+              if (patchedInRepo) {
+                this.logger.log(
+                  `Skipping generated test write for ${relativePath}; already updated by applied patch.`,
+                );
+                continue;
+              }
               throw new BadRequestException(
                 `Generated test ${relativePath} would overwrite an existing file in the review workspace.`,
               );
@@ -427,10 +466,32 @@ export class ReferenceSolutionsService {
     }
     const workspace = reference.validation.workspace as {
       status?: string;
-      repositories?: Array<{ repository_id?: string }>;
+      repositories?: Array<Record<string, unknown> & { repository_id?: string }>;
     } | undefined;
     if (workspace?.status !== 'applied' || !workspace.repositories?.length) {
       throw new BadRequestException('The applied review workspace is unavailable for execution.');
+    }
+    const workspaceRoot = this.storagePath ? this.workspacePath(reference.id) : null;
+    if (workspaceRoot && fs.existsSync(workspaceRoot)) {
+      workspace.repositories = workspace.repositories.map((repository) => {
+        const repositoryId = repository.repository_id;
+        if (typeof repositoryId !== 'string') {
+          return repository;
+        }
+        const repositoryPath = path.join(workspaceRoot, 'repositories', repositoryId);
+        if (!fs.existsSync(repositoryPath)) {
+          return repository;
+        }
+        const commands = this.suggestBuildAndTestCommands(repositoryPath);
+        return {
+          ...repository,
+          build_commands: commands.build,
+          test_commands: commands.tests,
+          setup_commands: commands.setup,
+          build_command_args: commands.buildArgs,
+          test_command_args: commands.testArgs,
+        };
+      });
     }
     const runs = Array.isArray(reference.validation.execution_runs)
       ? reference.validation.execution_runs as Array<Record<string, unknown>>
@@ -523,8 +584,8 @@ export class ReferenceSolutionsService {
             test_commands: (repository.test_command_args ?? []).map((args) => ({ args })),
           })),
         }),
-        headersTimeout: 1_800_000,
-        bodyTimeout: 1_800_000,
+        headersTimeout: 3_600_000,
+        bodyTimeout: 3_600_000,
       });
       const result = await response.body.json() as Record<string, unknown>;
       if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -659,6 +720,23 @@ export class ReferenceSolutionsService {
           throw new Error(detail);
         }
         const result = await response.body.json() as ReferenceGenerationResponse;
+        if (result.status === 'failed') {
+          reference.model = result.model ?? reference.model;
+          reference.promptVersion = result.prompt_version ?? reference.promptVersion;
+          reference.targetFiles = result.target_files ?? null;
+          reference.implementationPlan = result.implementation_plan ?? null;
+          reference.modifications = result.modifications ?? null;
+          reference.tests = result.tests ?? null;
+          reference.contextManifest = result.context_manifest ?? null;
+          reference.status = 'failed';
+          reference.errorMessage = result.error_message || 'Reference solution failed patch validation.';
+          reference.validation = {
+            ...reference.validation,
+            ...(result.validation ?? {}),
+          };
+          await this.references.save(reference);
+          return;
+        }
         if (
           result.status !== 'pending_review'
           || result.provider !== reference.provider
@@ -697,7 +775,11 @@ export class ReferenceSolutionsService {
           if (!result.implementation_plan || !result.tests || !result.context_manifest) {
             throw new Error('AI service returned an incomplete reference solution.');
           }
+          reference.targetFiles = result.target_files ?? null;
           reference.implementationPlan = result.implementation_plan;
+          reference.modifications = result.modifications ?? null;
+          reference.fileChanges = result.file_changes ?? null;
+          reference.solveScript = result.solve_script ?? null;
           reference.tests = result.tests;
           reference.contextManifest = result.context_manifest;
         }
@@ -806,6 +888,7 @@ export class ReferenceSolutionsService {
         repository_path: snapshot.checkoutPath,
         summary: analysis.summary,
         report: analysis.report,
+        context_markdown: analysis.contextMarkdown ?? null,
       });
     }
     return resolved;
@@ -1178,13 +1261,17 @@ export class ReferenceSolutionsService {
               : ['--cwd', prefix || '.', 'run', 'build'])]);
         }
         if (typeof scripts.test === 'string') {
-          const testCommand = `${packageManager}${prefix ? ` --prefix ${prefix}` : ''} test`;
+          const isJest = /\bjest\b/i.test(scripts.test);
+          const jestFlags = isJest
+            ? (packageManager === 'yarn' ? ['--forceExit', '--runInBand'] : ['--', '--forceExit', '--runInBand'])
+            : [];
+          const testCommand = `${packageManager}${prefix ? ` --prefix ${prefix}` : ''} test${jestFlags.length ? ` ${jestFlags.join(' ')}` : ''}`;
           tests.push(testCommand);
           testArgs.push(packageManager === 'npm'
-            ? ['npm', ...prefixArgs, 'test']
+            ? ['npm', ...prefixArgs, 'test', ...jestFlags]
             : [packageManager, ...(packageManager === 'pnpm'
-              ? ['--dir', prefix || '.', 'test']
-              : ['--cwd', prefix || '.', 'test'])]);
+              ? ['--dir', prefix || '.', 'test', ...jestFlags]
+              : ['--cwd', prefix || '.', 'test', ...jestFlags])]);
         }
         continue;
       }
@@ -1252,6 +1339,7 @@ export class ReferenceSolutionsService {
       acceptance_criteria: task.acceptanceCriteria ?? task.acceptance_criteria,
       constraints: task.constraints,
       affected_modules: task.affectedModules ?? task.affected_modules,
+      target_files: task.targetFiles ?? task.target_files ?? [],
       task_version: taskVersion,
     };
   }

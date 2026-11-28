@@ -474,7 +474,7 @@ describe('ReferenceSolutionsService review gates', () => {
         ['npm', '--prefix', 'frontend', 'run', 'build'],
       ]);
       expect(commands.testArgs).toEqual([
-        ['npm', '--prefix', 'backend', 'test'],
+        ['npm', '--prefix', 'backend', 'test', '--', '--forceExit', '--runInBand'],
         ['npm', '--prefix', 'frontend', 'test'],
       ]);
     } finally {
@@ -784,6 +784,336 @@ describe('ReferenceSolutionsService review gates', () => {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => error ? reject(error) : resolve());
       });
+    }
+  });
+});
+
+describe('ReferenceSolutionsService structured modifications and artifacts', () => {
+  it('persists solveScript, fileChanges, modifications, and targetFiles from AI service', async () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ref-artifacts-'));
+    const repoDir = path.join(tmpRoot, 'repo');
+    fs.mkdirSync(path.join(repoDir, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(repoDir, 'src', 'index.js'), "export const value = 'old';\n", 'utf8');
+
+    const reference: Record<string, any> = {
+      id: 'ref-structured-1',
+      taskId: 'task-1',
+      taskVersion: 1,
+      version: 1,
+      status: 'queued',
+      provider: 'openrouter',
+      input: {
+        projectId: 'proj-1',
+        task: {
+          title: 'Update value',
+          description: 'Change value from old to new',
+          category: 'feature',
+          difficulty: 'easy',
+          requirements: ['Req 1', 'Req 2'],
+          acceptanceCriteria: ['AC 1', 'AC 2'],
+          constraints: [],
+          affectedModules: ['src'],
+          targetFiles: ['src/index.js'],
+        },
+        baselineManifest: [{
+          repositoryId: 'repo-1',
+          snapshotId: 'snap-1',
+          analysisId: 'analysis-1',
+          commitSha: 'abc123',
+        }],
+        reviewerFeedback: '',
+      },
+      validation: {},
+    };
+
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        operation_id: 'ref-structured-1',
+        status: 'pending_review',
+        provider: 'openrouter',
+        model: 'openai/gpt-4o-mini',
+        prompt_version: 'reference-factory-v9',
+        target_files: ['src/index.js'],
+        implementation_plan: [{
+          repository_id: 'repo-1',
+          file_path: 'src/index.js',
+          action: 'modify',
+          rationale: 'Update exported constant.',
+          steps: ['Replace old with new.'],
+        }],
+        modifications: [{
+          repository_id: 'repo-1',
+          file_path: 'src/index.js',
+          operation: 'replace',
+          description: 'Update value',
+          search: "export const value = 'old';",
+          replace: "export const value = 'new';",
+          position: 'after',
+        }],
+        file_changes: [{
+          repository_id: 'repo-1',
+          file_path: 'src/index.js',
+          operation: 'replace',
+          original_content: "export const value = 'old';\n",
+          modified_content: "export const value = 'new';\n",
+        }],
+        patches: [{
+          repository_id: 'repo-1',
+          patch_diff: (
+            'diff --git a/src/index.js b/src/index.js\n'
+            + '--- a/src/index.js\n+++ b/src/index.js\n'
+            + "@@ -1,1 +1,1 @@\n-export const value = 'old';\n+export const value = 'new';\n"
+          ),
+        }],
+        solve_script: '#!/usr/bin/env bash\nset -euo pipefail\n',
+        tests: [{
+          repository_id: 'repo-1',
+          file_path: 'src/index.spec.js',
+          test_type: 'feature',
+          purpose: 'Verify value',
+          content: "test('value', () => {});\n",
+        }],
+        context_manifest: { repositories: [] },
+        validation: { patch_validation: 'passed' },
+      }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Server failed');
+
+    const service = Object.create(ReferenceSolutionsService.prototype) as ReferenceSolutionsService;
+    Object.assign(service, {
+      storagePath: tmpRoot,
+      config: { get: jest.fn(() => `http://127.0.0.1:${address.port}`) },
+      references: {
+        findOneBy: jest.fn().mockResolvedValue(reference),
+        save: jest.fn(async (val) => val),
+      },
+      analyses: {
+        findOneBy: jest.fn().mockResolvedValue({
+          id: 'analysis-1',
+          repositoryId: 'repo-1',
+          snapshotId: 'snap-1',
+          commitSha: 'abc123',
+          summary: {},
+          report: {},
+          contextMarkdown: '# Context',
+        }),
+      },
+      snapshots: {
+        createQueryBuilder: jest.fn(() => ({
+          addSelect: jest.fn().mockReturnThis(),
+          where: jest.fn().mockReturnThis(),
+          andWhere: jest.fn().mockReturnThis(),
+          getOne: jest.fn().mockResolvedValue({ checkoutPath: repoDir }),
+        })),
+      },
+      repositories: {
+        findOneBy: jest.fn().mockResolvedValue({ id: 'repo-1', fullName: 'sample/repo' }),
+      },
+      logger: { warn: jest.fn(), error: jest.fn() },
+    });
+
+    try {
+      await service.processGeneration('ref-structured-1');
+      expect(reference.status).toBe('pending_review');
+      expect(reference.targetFiles).toEqual(['src/index.js']);
+      expect(reference.modifications).toHaveLength(1);
+      expect(reference.fileChanges).toHaveLength(1);
+      expect(reference.solveScript).toContain('#!/usr/bin/env bash');
+
+      const artifacts = await service.getArtifacts('ref-structured-1');
+      expect(artifacts.solveScript).toContain('#!/usr/bin/env bash');
+      expect(artifacts.fileChanges).toHaveLength(1);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())));
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('marks reference failed when AI service reports exhausted patch validation errors', async () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ref-fail-'));
+    const repoDir = path.join(tmpRoot, 'repo');
+    fs.mkdirSync(path.join(repoDir, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(repoDir, 'src', 'index.js'), "export const value = 'old';\n", 'utf8');
+
+    const reference: Record<string, any> = {
+      id: 'ref-fail-1',
+      taskId: 'task-1',
+      taskVersion: 1,
+      version: 1,
+      status: 'queued',
+      provider: 'openrouter',
+      input: {
+        projectId: 'proj-1',
+        task: { title: 'Fail task', description: 'Desc', category: 'feature', difficulty: 'easy', requirements: ['a', 'b'], acceptanceCriteria: ['c', 'd'], constraints: [], affectedModules: ['src'] },
+        baselineManifest: [{ repositoryId: 'repo-1', snapshotId: 'snap-1', analysisId: 'analysis-1', commitSha: 'abc123' }],
+      },
+      validation: {},
+    };
+
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        operation_id: 'ref-fail-1',
+        status: 'failed',
+        provider: 'openrouter',
+        model: 'openai/gpt-4o-mini',
+        prompt_version: 'reference-factory-v9',
+        error_message: 'Exact search block not found.',
+        validation: { patch_validation: 'failed', patch_repair_attempts: 2 },
+      }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Server failed');
+
+    const service = Object.create(ReferenceSolutionsService.prototype) as ReferenceSolutionsService;
+    Object.assign(service, {
+      storagePath: tmpRoot,
+      config: { get: jest.fn(() => `http://127.0.0.1:${address.port}`) },
+      references: {
+        findOneBy: jest.fn().mockResolvedValue(reference),
+        save: jest.fn(async (val) => val),
+      },
+      analyses: {
+        findOneBy: jest.fn().mockResolvedValue({
+          id: 'analysis-1',
+          repositoryId: 'repo-1',
+          snapshotId: 'snap-1',
+          commitSha: 'abc123',
+          summary: {},
+          report: {},
+        }),
+      },
+      snapshots: {
+        createQueryBuilder: jest.fn(() => ({
+          addSelect: jest.fn().mockReturnThis(),
+          where: jest.fn().mockReturnThis(),
+          andWhere: jest.fn().mockReturnThis(),
+          getOne: jest.fn().mockResolvedValue({ checkoutPath: repoDir }),
+        })),
+      },
+      repositories: {
+        findOneBy: jest.fn().mockResolvedValue({ id: 'repo-1', fullName: 'sample/repo' }),
+      },
+      logger: { warn: jest.fn(), error: jest.fn() },
+    });
+
+    try {
+      await service.processGeneration('ref-fail-1');
+      expect(reference.status).toBe('failed');
+      expect(reference.errorMessage).toBe('Exact search block not found.');
+      expect(reference.validation.patch_validation).toBe('failed');
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())));
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('allows applyPatches when a test entry matches a file already modified by the patch', async () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ref-apply-test-'));
+    const repoDir = path.join(tmpRoot, 'repo');
+    fs.mkdirSync(path.join(repoDir, 'src', '__tests__'), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoDir, 'src', '__tests__', 'enum.test.ts'),
+      "test('a', () => {});\n",
+      'utf8',
+    );
+
+    const reference: Record<string, any> = {
+      id: 'ref-apply-1',
+      taskId: 'task-1',
+      taskVersion: 1,
+      version: 1,
+      status: 'pending_review',
+      provider: 'openrouter',
+      input: {
+        baselineManifest: [{
+          repositoryId: 'repo-1',
+          snapshotId: 'snap-1',
+          analysisId: 'analysis-1',
+          commitSha: 'abc123',
+        }],
+      },
+      patches: [{
+        repository_id: 'repo-1',
+        patch_diff: (
+          'diff --git a/src/__tests__/enum.test.ts b/src/__tests__/enum.test.ts\n'
+          + '--- a/src/__tests__/enum.test.ts\n+++ b/src/__tests__/enum.test.ts\n'
+          + "@@ -1,1 +1,2 @@\n test('a', () => {});\n+test('b', () => {});\n"
+        ),
+      }],
+      tests: [{
+        repository_id: 'repo-1',
+        file_path: 'src/__tests__/enum.test.ts',
+        test_type: 'feature',
+        purpose: 'Existing test file also listed in tests',
+        content: "// duplicate summary\n",
+      }],
+      validation: { apply_status: 'not_applied' },
+    };
+
+    const service = Object.create(ReferenceSolutionsService.prototype) as ReferenceSolutionsService;
+    Object.assign(service, {
+      storagePath: tmpRoot,
+      references: {
+        findOneBy: jest.fn().mockResolvedValue(reference),
+        save: jest.fn(async (val) => val),
+      },
+      analyses: {
+        findOneBy: jest.fn().mockResolvedValue({
+          id: 'analysis-1',
+          repositoryId: 'repo-1',
+          snapshotId: 'snap-1',
+          commitSha: 'abc123',
+          summary: {},
+          report: {},
+        }),
+      },
+      snapshots: {
+        createQueryBuilder: jest.fn(() => ({
+          addSelect: jest.fn().mockReturnThis(),
+          where: jest.fn().mockReturnThis(),
+          andWhere: jest.fn().mockReturnThis(),
+          getOne: jest.fn().mockResolvedValue({ checkoutPath: repoDir }),
+        })),
+      },
+      repositories: {
+        findOneBy: jest.fn().mockResolvedValue({ id: 'repo-1', fullName: 'sample/repo' }),
+      },
+      logger: { log: jest.fn(), warn: jest.fn(), error: jest.fn() },
+    });
+
+    try {
+      const updated = await service.applyPatches('ref-apply-1');
+      expect(updated.validation.apply_status).toBe('applied');
+      const appliedFile = fs.readFileSync(
+        path.join(tmpRoot, 'reference-workspaces', 'ref-apply-1', 'repositories', 'repo-1', 'src', '__tests__', 'enum.test.ts'),
+        'utf8',
+      );
+      expect(appliedFile).toContain("test('b', () => {});");
+      expect(appliedFile).not.toContain('// duplicate summary');
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('adds --forceExit and --runInBand for Jest test scripts in suggestBuildAndTestCommands', () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ref-jest-flags-'));
+    fs.writeFileSync(path.join(tmpRoot, 'yarn.lock'), '', 'utf8');
+    fs.writeFileSync(
+      path.join(tmpRoot, 'package.json'),
+      JSON.stringify({ scripts: { test: 'jest --coverage', build: 'tsc' } }),
+      'utf8',
+    );
+    const service = Object.create(ReferenceSolutionsService.prototype) as ReferenceSolutionsService;
+    try {
+      const result = (service as any).suggestBuildAndTestCommands(tmpRoot);
+      expect(result.testArgs).toEqual([['yarn', '--cwd', '.', 'test', '--forceExit', '--runInBand']]);
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
   });
 });

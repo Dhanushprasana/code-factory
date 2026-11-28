@@ -50,6 +50,24 @@ export class ReferenceSolutionEntity {
   @Column({ type: 'jsonb', nullable: true })
   patches: Array<{ repository_id: string; patch_diff: string }> | null;
 
+  @Column({ name: 'target_files', type: 'jsonb', nullable: true })
+  targetFiles: string[] | null;
+
+  @Column({ type: 'jsonb', nullable: true })
+  modifications: Record<string, unknown>[] | null;
+
+  @Column({ name: 'file_changes', type: 'jsonb', nullable: true })
+  fileChanges: Array<{
+    repository_id: string;
+    file_path: string;
+    operation: string;
+    original_content: string;
+    modified_content: string;
+  }> | null;
+
+  @Column({ name: 'solve_script', type: 'text', nullable: true })
+  solveScript: string | null;
+
   @Column({ type: 'jsonb', nullable: true })
   tests: Record<string, unknown>[] | null;
 

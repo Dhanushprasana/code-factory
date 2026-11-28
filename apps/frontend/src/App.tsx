@@ -17,6 +17,12 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import {
+  type ReferenceArtifactsData,
+  type ReferenceFileChange,
+  type ReferenceModification,
+  ReferenceSolutionViewer,
+} from './components/ReferenceSolutionViewer';
 
 const nav = [
   { to: '/', label: 'Overview', icon: CircleGauge },
@@ -1754,6 +1760,10 @@ type ReferenceSolution = {
     steps: string[];
   }> | null;
   patches: Array<{ repository_id: string; patch_diff: string }> | null;
+  targetFiles?: string[] | null;
+  modifications?: ReferenceModification[] | null;
+  fileChanges?: ReferenceFileChange[] | null;
+  solveScript?: string | null;
   tests: Array<{
     repository_id: string;
     file_path: string;
@@ -2051,6 +2061,7 @@ function TaskLibraryPage() {
   const [versions, setVersions] = useState<Array<{ id: string; version: number; content: Record<string, any>; createdAt: string }>>([]);
   const [referenceSolutions, setReferenceSolutions] = useState<ReferenceSolution[]>([]);
   const [selectedReferenceId, setSelectedReferenceId] = useState('');
+  const [selectedArtifacts, setSelectedArtifacts] = useState<ReferenceArtifactsData | null>(null);
   const [referenceFeedback, setReferenceFeedback] = useState('');
   const [reviewNote, setReviewNote] = useState('');
   const [referenceBusy, setReferenceBusy] = useState(false);
@@ -2122,6 +2133,33 @@ function TaskLibraryPage() {
     run => run.status === 'queued' || run.status === 'running',
   );
   const latestValidationRun = selectedReference?.validation.execution_runs?.[0];
+
+  useEffect(() => {
+    if (!selectedReference || selectedReference.status === 'queued' || selectedReference.status === 'running') {
+      setSelectedArtifacts(null);
+      return;
+    }
+    let active = true;
+    request<ReferenceArtifactsData>(`${apiUrl}/references/${selectedReference.id}/artifacts`)
+      .then((data) => {
+        if (active) setSelectedArtifacts(data);
+      })
+      .catch(() => {
+        if (active) {
+          setSelectedArtifacts({
+            id: selectedReference.id,
+            status: selectedReference.status,
+            errorMessage: selectedReference.errorMessage,
+            targetFiles: selectedReference.targetFiles,
+            modifications: selectedReference.modifications,
+            fileChanges: selectedReference.fileChanges,
+            solveScript: selectedReference.solveScript,
+            validation: selectedReference.validation,
+          });
+        }
+      });
+    return () => { active = false; };
+  }, [selectedReference?.id, selectedReference?.status]);
 
   const saveChanges = async () => {
     if (!task) return;
@@ -2298,7 +2336,20 @@ function TaskLibraryPage() {
         </p>
         {selectedReference.status === 'queued' || selectedReference.status === 'running'
           ? <p className="form-hint reference-disclaimer">Reference generation is running in the background. This panel refreshes automatically.</p>
-          : selectedReference.status !== 'failed' && <>
+          : <>
+            <ReferenceSolutionViewer
+              artifacts={selectedArtifacts ?? {
+                id: selectedReference.id,
+                status: selectedReference.status,
+                errorMessage: selectedReference.errorMessage,
+                targetFiles: selectedReference.targetFiles,
+                modifications: selectedReference.modifications,
+                fileChanges: selectedReference.fileChanges,
+                solveScript: selectedReference.solveScript,
+                validation: selectedReference.validation,
+              }}
+            />
+            {selectedReference.status !== 'failed' && <>
             <details className="reference-artifact" open>
               <summary>Implementation plan ({selectedReference.implementationPlan?.length ?? 0} files)</summary>
               {selectedReference.implementationPlan?.map((item, index) => <article className="reference-plan-item" key={`${item.repository_id}-${item.file_path}-${index}`}>
@@ -2399,6 +2450,7 @@ function TaskLibraryPage() {
               </div>
               {selectedReference.reviewNote && <p className="form-hint">Latest review note: {selectedReference.reviewNote}</p>}
             </section>
+          </>}
           </>}
       </>}
     </section>}

@@ -61,6 +61,9 @@ export class TaskEntity {
   @Column({ name: 'affected_modules', type: 'jsonb', default: () => "'[]'::jsonb" })
   affectedModules: string[];
 
+  @Column({ name: 'target_files', type: 'jsonb', default: () => "'[]'::jsonb" })
+  targetFiles: string[];
+
   @Column({ name: 'baseline_manifest', type: 'jsonb' })
   baselineManifest: Record<string, unknown>[];
 

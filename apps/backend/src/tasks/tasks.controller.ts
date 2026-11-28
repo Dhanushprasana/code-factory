@@ -82,6 +82,11 @@ export class TasksController {
     return this.referenceSolutions.get(referenceId);
   }
 
+  @Get('references/:id/artifacts')
+  referenceArtifacts(@Param('id') referenceId: string) {
+    return this.referenceSolutions.getArtifacts(referenceId);
+  }
+
   @Post('references/:id/apply')
   applyReference(@Param('id') referenceId: string) {
     return this.referenceSolutions.applyPatches(referenceId);

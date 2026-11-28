@@ -7,6 +7,13 @@ from typing import Any
 
 
 MAX_SOURCE_FILE_BYTES = 512_000
+IGNORED_BUILD_DIRS = {
+    ".git", ".hg", ".svn", ".next", ".nuxt", ".output", ".parcel-cache",
+    ".svelte-kit", ".turbo", ".venv", ".cache", "__pycache__", "build",
+    "coverage", "deno", "dist", "generated", "node_modules", "out",
+    "target", "vendor", "venv",
+}
+IGNORED_BUILD_SUFFIXES = (".d.ts", ".min.js", ".min.css", ".bundle.js", ".map")
 SOURCE_EXTENSIONS = {
     ".c", ".cc", ".cpp", ".cs", ".go", ".java", ".js", ".jsx", ".kt",
     ".php", ".py", ".rb", ".rs", ".swift", ".ts", ".tsx", ".vue",
@@ -26,9 +33,19 @@ def _tokens(text: str) -> set[str]:
     }
 
 
+def _is_ignored_build_path(relative_path: str) -> bool:
+    parts = PurePosixPath(relative_path).parts
+    if any(part in IGNORED_BUILD_DIRS for part in parts[:-1]):
+        return True
+    lowered = relative_path.lower()
+    return lowered.endswith(IGNORED_BUILD_SUFFIXES)
+
+
 def _safe_repository_file(root: Path, relative_path: str) -> Path | None:
     relative = PurePosixPath(relative_path)
     if relative.is_absolute() or not relative.parts or any(part in {"..", "."} for part in relative.parts):
+        return None
+    if _is_ignored_build_path(relative_path):
         return None
     candidate = (root / Path(*relative.parts)).resolve()
     try:

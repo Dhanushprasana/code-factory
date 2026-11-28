@@ -52,6 +52,7 @@ interface SaveTaskInput {
   acceptanceCriteria?: unknown;
   constraints?: unknown;
   affectedModules?: unknown;
+  targetFiles?: unknown;
 }
 
 interface TaskSuggestionResponse {
@@ -275,6 +276,7 @@ export class TasksService {
       acceptance_criteria: input.acceptanceCriteria ?? original.acceptance_criteria,
       constraints: input.constraints ?? original.constraints,
       affected_modules: input.affectedModules ?? original.affected_modules,
+      target_files: input.targetFiles ?? original.target_files ?? [],
     };
     const content = this.normalizeTask(candidate);
     const baselineManifest = this.getBaselineManifest(generation.contextManifest);
@@ -318,6 +320,7 @@ export class TasksService {
       acceptance_criteria: input.acceptanceCriteria ?? current.acceptanceCriteria,
       constraints: input.constraints ?? current.constraints,
       affected_modules: input.affectedModules ?? current.affectedModules,
+      target_files: input.targetFiles ?? current.targetFiles ?? [],
     };
     const content = this.normalizeTask(changes);
     Object.assign(task, content);
@@ -376,6 +379,7 @@ export class TasksService {
         repository_path: snapshot.checkoutPath,
         summary: analysis.summary,
         report: analysis.report,
+        context_markdown: analysis.contextMarkdown ?? null,
       });
     }
     return resolved;
@@ -460,6 +464,12 @@ export class TasksService {
       1,
       10,
     );
+    const targetFiles = this.requireStringList(
+      candidate.target_files ?? candidate.targetFiles ?? [],
+      'Invalid target files.',
+      0,
+      20,
+    );
     const evidence = Array.isArray(candidate.evidence) ? candidate.evidence : [];
     if (!evidence.length) {
       throw new BadRequestException('Task evidence is required.');
@@ -473,6 +483,7 @@ export class TasksService {
       acceptanceCriteria,
       constraints,
       affectedModules,
+      targetFiles,
       evidence: evidence as Record<string, unknown>[],
     };
   }
@@ -519,6 +530,7 @@ export class TasksService {
       acceptanceCriteria: task.acceptanceCriteria,
       constraints: task.constraints,
       affectedModules: task.affectedModules,
+      targetFiles: task.targetFiles ?? [],
       baselineManifest: task.baselineManifest,
       contextManifest: task.contextManifest,
       evidence: task.evidence,

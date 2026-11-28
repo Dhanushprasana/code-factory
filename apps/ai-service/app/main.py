@@ -2,7 +2,14 @@ from fastapi import FastAPI
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 from pathlib import Path
+import logging
 import os
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("ai_service")
 
 from app.analyzers.repository_analyzer import (
     ANALYZER_VERSION,

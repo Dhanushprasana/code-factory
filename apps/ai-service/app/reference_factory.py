@@ -2,14 +2,24 @@ from __future__ import annotations
 
 import difflib
 import json
+import logging
 import re
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
+
+logger = logging.getLogger("ai_service.reference_factory")
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.context_engine import build_task_context
+from app.patch_engine import (
+    FileModification,
+    load_target_sources,
+    validate_and_apply_modifications,
+    validate_target_files,
+)
+from app.solve_compiler import compile_solve_script
 from app.task_factory import (
     RepositoryContextInput,
     _env_setting,
@@ -20,6 +30,7 @@ from app.task_factory import (
 TaskProvider = Literal["openrouter", "ollama"]
 PATCH_REPAIR_SOURCE_FILE_LIMIT = 12000
 PATCH_REPAIR_SOURCE_TOTAL_LIMIT = 30000
+DEFAULT_MAX_REPAIR_ATTEMPTS = 2
 
 
 class ReferenceTaskInput(BaseModel):
@@ -31,6 +42,7 @@ class ReferenceTaskInput(BaseModel):
     acceptance_criteria: list[str]
     constraints: list[str]
     affected_modules: list[str]
+    target_files: list[str] = Field(default_factory=list)
     task_version: int = Field(ge=1)
 
 
@@ -62,6 +74,7 @@ class ReferenceGenerationRequest(BaseModel):
     provider: TaskProvider
     reviewer_feedback: str | None = Field(default=None, max_length=2000)
     patch_repair: PatchRepairContext | None = None
+    max_repair_attempts: int | None = Field(default=None, ge=0, le=5)
     task: ReferenceTaskInput
     repositories: list[RepositoryContextInput] = Field(min_length=1, max_length=10)
 
@@ -364,6 +377,124 @@ def _build_repaired_patch(
     return "".join(patches)
 
 
+class StructuredReferenceSolutionOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    implementation_plan: list[ImplementationPlanItem] = Field(min_length=1, max_length=30)
+    modifications: list[FileModification] = Field(min_length=1, max_length=40)
+    tests: list[GeneratedTestFile] = Field(min_length=1, max_length=30)
+
+
+class ModificationRepairOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    modifications: list[FileModification] = Field(min_length=1, max_length=40)
+
+
+def _modification_item_schema(repository_id_schema: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "repository_id",
+            "file_path",
+            "operation",
+            "description",
+            "search",
+            "replace",
+            "position",
+        ],
+        "properties": {
+            "repository_id": repository_id_schema,
+            "file_path": {"type": "string", "minLength": 1, "maxLength": 500},
+            "operation": {"type": "string", "enum": ["replace", "insert", "create", "delete"]},
+            "description": {"type": "string", "minLength": 1, "maxLength": 1000},
+            "search": {"type": ["string", "null"], "maxLength": 100_000},
+            "replace": {"type": ["string", "null"], "maxLength": 100_000},
+            "position": {"type": "string", "enum": ["before", "after"]},
+        },
+    }
+
+
+def _structured_reference_response_schema(allowed_repository_ids: set[str]) -> dict[str, Any]:
+    repository_id_schema = {
+        "type": "string",
+        "enum": sorted(allowed_repository_ids),
+    }
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["implementation_plan", "modifications", "tests"],
+        "properties": {
+            "implementation_plan": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 30,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["repository_id", "file_path", "action", "rationale", "steps"],
+                    "properties": {
+                        "repository_id": repository_id_schema,
+                        "file_path": {"type": "string"},
+                        "action": {"type": "string", "enum": ["create", "modify", "delete", "test"]},
+                        "rationale": {"type": "string", "minLength": 10, "maxLength": 1000},
+                        "steps": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 10,
+                            "items": {"type": "string"},
+                        },
+                    },
+                },
+            },
+            "modifications": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 40,
+                "items": _modification_item_schema(repository_id_schema),
+            },
+            "tests": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 30,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["repository_id", "file_path", "test_type", "purpose", "content"],
+                    "properties": {
+                        "repository_id": repository_id_schema,
+                        "file_path": {"type": "string"},
+                        "test_type": {"type": "string", "enum": ["feature", "regression", "acceptance"]},
+                        "purpose": {"type": "string", "minLength": 10, "maxLength": 500},
+                        "content": {"type": "string", "minLength": 20, "maxLength": 20000},
+                    },
+                },
+            },
+        },
+    }
+
+
+def _modification_repair_response_schema(allowed_repository_ids: set[str]) -> dict[str, Any]:
+    repository_id_schema = {
+        "type": "string",
+        "enum": sorted(allowed_repository_ids),
+    }
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["modifications"],
+        "properties": {
+            "modifications": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 40,
+                "items": _modification_item_schema(repository_id_schema),
+            },
+        },
+    }
+
+
 def _reference_response_schema(allowed_repository_ids: set[str]) -> dict[str, Any]:
     repository_id_schema = {
         "type": "string",
@@ -501,7 +632,7 @@ async def generate_reference_solution(request: ReferenceGenerationRequest) -> di
         model = _env_setting("OLLAMA_MODEL", "qwen2.5:7b")
 
     token_budget = int(_env_setting("TASK_CONTEXT_TOKEN_BUDGET", "10000"))
-    output_token_budget = int(_env_setting("REFERENCE_OUTPUT_TOKEN_BUDGET", "8000"))
+    output_token_budget = int(_env_setting("REFERENCE_OUTPUT_TOKEN_BUDGET", "16000"))
     context, manifest = build_task_context(
         [repository.model_dump() for repository in request.repositories],
         request.task.title + " " + request.task.description,
@@ -559,43 +690,16 @@ async def generate_reference_solution(request: ReferenceGenerationRequest) -> di
             + f"Pinned repository context: {json.dumps(context, ensure_ascii=False)}"
         )
         response_schema = _patch_repair_response_schema(allowed_paths)
-    else:
-        prompt = (
-            common_prompt
-            + "Return only a JSON object with implementation_plan, patches, and tests. The implementation "
-        "plan must be file-by-file. Each plan item and test file must include the exact repository_id "
-        "from the supplied context. Each patches item must include one repository_id and a complete "
-        "unified Git diff, not only @@ hunk lines. Include no more than one patch bundle per repository. "
-        f"Every repository_id must be selected from {json.dumps(sorted(allowed_repository_ids))}. "
-        "Each file needs its own diff --git, --- and +++ headers, and hunk counts must exactly match "
-        "the lines in each hunk. Hunk ranges must use pinned-file line numbers and be ordered and non-overlapping. "
-        "Every hunk body line must use a leading space for context, + for additions, or - for deletions; "
-        "even a blank context line must contain its leading space. Do not output standalone hunks or markdown fences. "
-        "Every diff --git header must begin in column 1 with no leading whitespace; never make a file header "
-        "part of the preceding hunk. Every changed file must start with a "
-        "`diff --git a/<path> b/<path>` line, followed by `--- a/<path>`, `+++ b/<path>`, and @@ hunks. "
-        "Use actual paths and hunk content from the pinned repository. Copy existing import paths exactly; "
-        "do not infer, normalize, or duplicate imports already present in the file prologue. "
-        "Do not include placeholder changes such as "
-        "`-old line`, `+new line`, `TODO`, or `...`. Include public feature, regression, or acceptance "
-        "test files as text, but do not include hidden tests. Every test file path and changed path must "
-        "be relative and must not traverse outside the repository. Keep the patch focused on the task, "
-        "preserve unrelated behavior, and ensure the test assertions check observable outcomes. "
-        + task_prompt
-        + f"Pinned repository context: {json.dumps(context, ensure_ascii=False)}"
+        response_text = await _request_chat_completions(
+            request.provider,
+            base_url,
+            model,
+            prompt,
+            output_token_budget,
+            api_key,
+            response_schema,
+            timeout_seconds=1200.0 if request.provider == "ollama" else 90.0,
         )
-        response_schema = _reference_response_schema(allowed_repository_ids)
-    response_text = await _request_chat_completions(
-        request.provider,
-        base_url,
-        model,
-        prompt,
-        output_token_budget,
-        api_key,
-        response_schema,
-        timeout_seconds=1200.0 if request.provider == "ollama" else 90.0,
-    )
-    if request.patch_repair:
         repair_output = _validate_patch_repair_output(
             _extract_json(response_text),
             set(_patch_repair_paths(request.patch_repair)),
@@ -614,20 +718,209 @@ async def generate_reference_solution(request: ReferenceGenerationRequest) -> di
             "context_manifest": manifest,
         }
 
-    output = _validate_reference_output(_extract_json(response_text), allowed_repository_ids)
+    repo_dicts = [repository.model_dump() for repository in request.repositories]
+    requested_target_files = list(dict.fromkeys(request.task.target_files))
+    if not requested_target_files:
+        requested_target_files = list(dict.fromkeys(
+            chunk["file_path"]
+            for repo_ctx in context["repositories"]
+            for chunk in repo_ctx.get("chunks", [])
+            if isinstance(chunk.get("file_path"), str)
+        ))
+
+    valid_target_files, target_errors = validate_target_files(requested_target_files, repo_dicts)
+    if target_errors:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid target_files: {target_errors[0]['message']}",
+        )
+
+    loaded_sources, excluded_sources = load_target_sources(repo_dicts, valid_target_files)
+    logger.info(
+        "Reference generation %s: loaded %d target files (%d excluded)",
+        request.operation_id,
+        len(loaded_sources),
+        len(excluded_sources),
+    )
+    if excluded_sources and not loaded_sources:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Requested target files could not be loaded completely within source size limits: "
+                + ", ".join(f"{item['file_path']} ({item['status']})" for item in excluded_sources)
+            ),
+        )
+
+    context_markdowns = [
+        {
+            "repository_id": repo.repository_id,
+            "repository_name": repo.repository_name,
+            "context_markdown": repo.context_markdown,
+        }
+        for repo in request.repositories
+        if repo.context_markdown
+    ]
+
+    prompt = (
+        common_prompt
+        + "Return only a JSON object with `implementation_plan`, `modifications`, and `tests`. "
+        + "You are provided the COMPLETE, EXACT contents of the target source files below. "
+        + "STRICT FORMATTING RULES: "
+        + "(1) Preserve each file's EXACT quote style (`'` vs `\"`)—NEVER convert double quotes to single quotes or vice versa. "
+        + "(2) Copy `search` character-for-character with exact `\\n` line breaks and leading spaces—NEVER collapse multi-line code onto one line. "
+        + "(3) When adding new code or tests after an existing block, prefer `operation: \"insert\"` (`position: \"after\"`) using a short, unique 1-3 line `search` anchor rather than repeating a large multi-line block in `replace`. "
+        + "Each `search` block must appear exactly once in the target file. "
+        + "Use `replace` to replace an exact block, `insert` to insert `replace` before or after an exact `search` anchor, "
+        + "`create` to create a new file (with `search: null` and full content in `replace`), and `delete` only when explicitly required. "
+        + "Preserve all unrelated existing functionality, do not duplicate existing imports, and register new files in application modules when needed. "
+        + f"Every repository_id must be selected from {json.dumps(sorted(allowed_repository_ids))}. "
+        + "Include public feature, regression, or acceptance test files as text, but do not include hidden tests. "
+        + "Every entry in `tests` MUST use a NEW test file path that does not already exist in the repository; "
+        + "if you need to modify an existing test file, do so in `modifications` and place a new test file in `tests`. "
+        + task_prompt
+        + f"Target source files (complete exact contents): {json.dumps(loaded_sources, ensure_ascii=False)}. "
+        + (f"Excluded oversized files (do not patch blindly): {json.dumps(excluded_sources, ensure_ascii=False)}. " if excluded_sources else "")
+        + (f"Repository context.md: {json.dumps(context_markdowns, ensure_ascii=False)}. " if context_markdowns else "")
+        + f"Pinned repository context: {json.dumps(context, ensure_ascii=False)}"
+    )
+    response_schema = _structured_reference_response_schema(allowed_repository_ids)
+    timeout = 1200.0 if request.provider == "ollama" else 90.0
+    response_text = await _request_chat_completions(
+        request.provider,
+        base_url,
+        model,
+        prompt,
+        output_token_budget,
+        api_key,
+        response_schema,
+        timeout_seconds=timeout,
+    )
+    try:
+        output = StructuredReferenceSolutionOutput.model_validate(_extract_json(response_text))
+    except ValidationError as error:
+        invalid_fields = ", ".join(
+            f"{'.'.join(str(part) for part in issue['loc']) or '<root>'} ({issue['type']})"
+            for issue in error.errors()[:5]
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "The AI provider returned a reference solution that did not match the required schema. "
+                f"Invalid fields: {invalid_fields}."
+            ),
+        ) from error
+
+    if any(
+        item.repository_id not in allowed_repository_ids
+        for item in output.implementation_plan
+    ) or any(
+        test.repository_id not in allowed_repository_ids
+        for test in output.tests
+    ):
+        raise HTTPException(
+            status_code=502,
+            detail="The AI provider returned an implementation plan or test with an unknown repository.",
+        )
+
+    current_modifications = output.modifications
+    validation_result = validate_and_apply_modifications(repo_dicts, current_modifications)
+    max_repairs = (
+        request.max_repair_attempts
+        if request.max_repair_attempts is not None
+        else int(_env_setting("REFERENCE_MAX_REPAIR_ATTEMPTS", str(DEFAULT_MAX_REPAIR_ATTEMPTS)))
+    )
+    repair_attempts = 0
+
+    while not validation_result["valid"] and repair_attempts < max_repairs:
+        repair_attempts += 1
+        logger.warning(
+            "Reference %s failed deterministic validation (attempt %d/%d): %s",
+            request.operation_id,
+            repair_attempts,
+            max_repairs,
+            validation_result["errors"],
+        )
+        repair_prompt = (
+            common_prompt
+            + "Your previous modifications failed deterministic patch validation against the actual source files. "
+            + "Return only a JSON object with a corrected `modifications` array. "
+            + "Fix every validation error below using the exact original source files provided. "
+            + "Preserve exact single or double quotes, whitespace, and unrelated existing code. "
+            + task_prompt
+            + f"Validation errors: {json.dumps(validation_result['errors'], ensure_ascii=False)}. "
+            + f"Previous modifications: {json.dumps([m.model_dump() for m in current_modifications], ensure_ascii=False)}. "
+            + f"Actual source files: {json.dumps(loaded_sources, ensure_ascii=False)}"
+        )
+        repair_text = await _request_chat_completions(
+            request.provider,
+            base_url,
+            model,
+            repair_prompt,
+            output_token_budget,
+            api_key,
+            _modification_repair_response_schema(allowed_repository_ids),
+            timeout_seconds=timeout,
+        )
+        try:
+            repair_output = ModificationRepairOutput.model_validate(_extract_json(repair_text))
+        except ValidationError as error:
+            validation_result["errors"].append({
+                "code": "repair_schema_invalid",
+                "message": f"Repair attempt {repair_attempts} returned invalid schema: {error}",
+            })
+            continue
+        current_modifications = repair_output.modifications
+        validation_result = validate_and_apply_modifications(repo_dicts, current_modifications)
+
+    if not validation_result["valid"]:
+        first_err = validation_result["errors"][0]["message"] if validation_result["errors"] else "Patch validation failed."
+        return {
+            "operation_id": request.operation_id,
+            "status": "failed",
+            "provider": request.provider,
+            "model": model,
+            "prompt_version": "reference-factory-v9",
+            "target_files": valid_target_files,
+            "implementation_plan": [item.model_dump() for item in output.implementation_plan],
+            "modifications": [item.model_dump() for item in current_modifications],
+            "tests": [item.model_dump() for item in output.tests],
+            "context_manifest": manifest,
+            "error_message": first_err,
+            "validation": {
+                "patch_validation": "failed",
+                "patch_preflight": "failed",
+                "patch_errors": validation_result["errors"],
+                "patch_repair_attempts": repair_attempts,
+                "excluded_sources": excluded_sources,
+                "build": "not_run",
+                "tests": "not_run",
+                "execution_mode": "not_run",
+            },
+        }
+
+    mod_dicts = validation_result["modifications"]
+    solve_script = compile_solve_script(mod_dicts, repo_dicts)
+
     return {
         "operation_id": request.operation_id,
         "status": "pending_review",
         "provider": request.provider,
         "model": model,
-        "prompt_version": "reference-factory-v8",
+        "prompt_version": "reference-factory-v9",
+        "target_files": valid_target_files,
         "implementation_plan": [item.model_dump() for item in output.implementation_plan],
-        "patches": [item.model_dump() for item in output.patches],
+        "modifications": mod_dicts,
+        "file_changes": validation_result["file_changes"],
+        "patches": validation_result["patches"],
+        "solve_script": solve_script,
         "tests": [item.model_dump() for item in output.tests],
         "context_manifest": manifest,
         "validation": {
+            "patch_validation": "passed",
             "patch_format": "passed",
             "test_files_present": "passed",
+            "patch_repair_attempts": repair_attempts,
+            "excluded_sources": excluded_sources,
             "build": "not_run",
             "tests": "not_run",
             "execution_mode": "not_run",
