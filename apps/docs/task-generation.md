@@ -227,7 +227,7 @@ Both providers use the OpenAI-compatible `POST {baseUrl}/chat/completions` endpo
 
 | Provider | Default model / URL | Authentication and output format |
 | --- | --- | --- |
-| OpenRouter | `openai/gpt-4o-mini`; `https://openrouter.ai/api/v1` | Requires `OPENROUTER_API_KEY` as a bearer token. Requests strict JSON-schema output that limits suggestion count and constrains categories, difficulties, modules, and evidence fields to retrieved context. |
+| OpenRouter | `baidu/ernie-5.5-flash-preview:free`; `https://openrouter.ai/api/v1` | Requires `OPENROUTER_API_KEY` as a bearer token. Requests strict JSON-schema output that limits suggestion count and constrains categories, difficulties, modules, and evidence fields to retrieved context. |
 | Ollama | `qwen2.5:7b`; `http://host.docker.internal:11434/v1` | No cloud API key. Requests the same strict JSON schema as OpenRouter. |
 
 For the optional Compose profile, set `OLLAMA_BASE_URL=http://ollama:11434/v1`. The verified local setup used `qwen2.5:3b`; the model tag is configurable. `OLLAMA_CONTEXT_LENGTH` defaults to 16,384. OpenRouter requests time out after 90 seconds and Ollama requests after 300 seconds; the backend allows 310 seconds for the AI-service call.
@@ -310,7 +310,7 @@ Configuration is read from the backend environment and passed to the AI-service 
 | --- | --- | --- |
 | `OPENROUTER_API_KEY` | Required only when OpenRouter is selected. | Empty |
 | `OPENROUTER_BASE_URL` | OpenRouter-compatible API base URL. | `https://openrouter.ai/api/v1` |
-| `OPENROUTER_MODEL` | OpenRouter model slug. | `openai/gpt-4o-mini` |
+| `OPENROUTER_MODEL` | OpenRouter model slug. | `baidu/ernie-5.5-flash-preview:free` |
 | `OLLAMA_BASE_URL` | Ollama OpenAI-compatible base URL. | `http://host.docker.internal:11434/v1` |
 | `OLLAMA_MODEL` | Model tag already pulled into the Ollama server. | `qwen2.5:7b` |
 | `OLLAMA_CONTEXT_LENGTH` | Context window configured for the Compose Ollama service. | `16384` |

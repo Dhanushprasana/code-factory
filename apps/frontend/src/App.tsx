@@ -419,19 +419,19 @@ function Projects({ onNewProject }: { onNewProject: () => void }) {
       {error && <div className="inline-notice error" role="alert">{error}</div>}
       {notice && <div className="inline-notice" role="status">{notice}</div>}
       {projects.length === 0 ? <section className="panel empty-state"><h2>Create a project to get started</h2><p>Projects group repositories and their pinned commit baselines.</p><button className="primary-button" onClick={onNewProject}><Plus size={17} /> Create project</button></section> : <>
-      <div className="project-picker"><label htmlFor="project-select">Project</label><select id="project-select" value={projectId} onChange={event => setProjectId(event.target.value)}>{projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></div>
-      <div className="project-detail">
-        <aside className="project-summary">
-          <div className="project-logo">{(selectedProject?.name ?? 'P').slice(0, 2).toUpperCase()}</div><h2>{selectedProject?.name}</h2><p>{selectedProject?.description || 'Project repositories and immutable baselines.'}</p>
-          <div className="summary-meta"><span>Components <strong>{components.length}</strong></span><span>Commits pinned <strong>{components.filter(item => item.selectedCommitSha).length}</strong></span></div>
-          <button className="secondary-button danger-button" onClick={deleteProject}>Delete project</button>
-        </aside>
-        <section className="component-panel">
-          <div className="panel-head"><div><span className="eyebrow">Project components</span><h2>Repository baselines</h2></div><div className="panel-actions"><button className="secondary-button" onClick={() => request<{url:string}>(`${apiUrl}/github/install-url`).then(result => window.open(result.url, '_blank', 'noopener,noreferrer')).catch(reason => setError(reason.message))}>Connect GitHub</button><button className="secondary-button" onClick={() => setRepoModal(true)}><Plus size={16} /> Add repository</button></div></div>
-          {components.length === 0 && <div className="empty-state compact">No repositories connected to this project yet.</div>}
-          {components.map(association => <div className="repository-row" key={association.id}><div className="repo-icon"><GitBranch size={18} /></div><div className="row-main"><strong>{association.repository.fullName}</strong><span>{association.repoRole} · branch {association.selectedBranch || association.repository.defaultBranch}</span></div><code title={association.selectedCommitSha}>{association.selectedCommitSha?.slice(0, 12) ?? 'No commit'}</code><button className="secondary-button" onClick={() => clone(association)}>Clone snapshot</button><button className="secondary-button" disabled={!association.selectedCommitSha} onClick={() => navigate(`/analysis?projectId=${encodeURIComponent(projectId)}&repositoryId=${encodeURIComponent(association.repositoryId)}`)}>Analyze</button><button className="secondary-button danger-button" onClick={() => removeRepository(association)}>Remove</button></div>)}
-        </section>
-      </div>
+        <div className="project-picker"><label htmlFor="project-select">Project</label><select id="project-select" value={projectId} onChange={event => setProjectId(event.target.value)}>{projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></div>
+        <div className="project-detail">
+          <aside className="project-summary">
+            <div className="project-logo">{(selectedProject?.name ?? 'P').slice(0, 2).toUpperCase()}</div><h2>{selectedProject?.name}</h2><p>{selectedProject?.description || 'Project repositories and immutable baselines.'}</p>
+            <div className="summary-meta"><span>Components <strong>{components.length}</strong></span><span>Commits pinned <strong>{components.filter(item => item.selectedCommitSha).length}</strong></span></div>
+            <button className="secondary-button danger-button" onClick={deleteProject}>Delete project</button>
+          </aside>
+          <section className="component-panel">
+            <div className="panel-head"><div><span className="eyebrow">Project components</span><h2>Repository baselines</h2></div><div className="panel-actions"><button className="secondary-button" onClick={() => request<{ url: string }>(`${apiUrl}/github/install-url`).then(result => window.open(result.url, '_blank', 'noopener,noreferrer')).catch(reason => setError(reason.message))}>Connect GitHub</button><button className="secondary-button" onClick={() => setRepoModal(true)}><Plus size={16} /> Add repository</button></div></div>
+            {components.length === 0 && <div className="empty-state compact">No repositories connected to this project yet.</div>}
+            {components.map(association => <div className="repository-row" key={association.id}><div className="repo-icon"><GitBranch size={18} /></div><div className="row-main"><strong>{association.repository.fullName}</strong><span>{association.repoRole} · branch {association.selectedBranch || association.repository.defaultBranch}</span></div><code title={association.selectedCommitSha}>{association.selectedCommitSha?.slice(0, 12) ?? 'No commit'}</code><button className="secondary-button" onClick={() => clone(association)}>Clone snapshot</button><button className="secondary-button" disabled={!association.selectedCommitSha} onClick={() => navigate(`/analysis?projectId=${encodeURIComponent(projectId)}&repositoryId=${encodeURIComponent(association.repositoryId)}`)}>Analyze</button><button className="secondary-button danger-button" onClick={() => removeRepository(association)}>Remove</button></div>)}
+          </section>
+        </div>
       </>}
       {repoModal && projectId && <AddRepositoryModal projectId={projectId} onClose={() => setRepoModal(false)} onAdded={() => {
         setRepoModal(false);
@@ -453,9 +453,13 @@ function AnalysisPage() {
   const [analysis, setAnalysis] = useState<AnalysisRecord | null>(null);
   const [error, setError] = useState('');
   const [starting, setStarting] = useState(false);
-  const [analysisView, setAnalysisView] = useState<'overview' | 'features' | 'structure' | 'modules'>('overview');
+  const [analysisView, setAnalysisView] = useState<'overview' | 'existing_features' | 'features' | 'structure' | 'modules'>('overview');
   const [featureQuery, setFeatureQuery] = useState('');
   const [featureLayer, setFeatureLayer] = useState('all');
+  const [existingFeatureQuery, setExistingFeatureQuery] = useState('');
+  const [existingFeatureCategory, setExistingFeatureCategory] = useState('all');
+  const [featureProvider, setFeatureProvider] = useState<'openrouter' | 'ollama'>('openrouter');
+  const [extractingFeatures, setExtractingFeatures] = useState(false);
   const [fileQuery, setFileQuery] = useState('');
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
   const [selectedAreaId, setSelectedAreaId] = useState('');
@@ -465,6 +469,8 @@ function AnalysisPage() {
     setAnalysisView('overview');
     setFeatureQuery('');
     setFeatureLayer('all');
+    setExistingFeatureQuery('');
+    setExistingFeatureCategory('all');
     setFileQuery('');
     setExpandedPaths(new Set());
     setSelectedAreaId('');
@@ -580,6 +586,32 @@ function AnalysisPage() {
     .slice(0, 40);
   const graph = report?.graph as { nodes?: any[]; edges?: any[] } | undefined;
   const features = Array.isArray(summary?.features) ? summary.features : [];
+  const repositoryProfile = (summary?.repository_profile ?? report?.repository_profile ?? null) as Record<string, any> | null;
+  const existingFeatures = (Array.isArray(summary?.existing_features)
+    ? summary.existing_features
+    : Array.isArray(report?.existing_features)
+      ? report.existing_features
+      : []) as Array<Record<string, any>>;
+  const nicheDetails = (summary?.niche_details ?? report?.niche_details ?? null) as Record<string, any> | null;
+  const aiRepositoryOverview = typeof summary?.ai_repository_overview === 'string' ? summary.ai_repository_overview : '';
+  const aiExistingFeatures = (Array.isArray(summary?.ai_existing_features)
+    ? summary.ai_existing_features
+    : Array.isArray(report?.ai_existing_features)
+      ? report.ai_existing_features
+      : []) as Array<Record<string, any>>;
+  const aiFeatureInventory = (Array.isArray(summary?.ai_feature_inventory)
+    ? summary.ai_feature_inventory
+    : Array.isArray(report?.ai_feature_inventory)
+      ? report.ai_feature_inventory
+      : []) as Array<Record<string, any>>;
+  const activeExistingFeatures = aiExistingFeatures.length > 0 ? aiExistingFeatures : existingFeatures;
+  const existingFeatureCategories = Array.from(new Set(activeExistingFeatures.map(item => String(item.category ?? 'Core Capability'))));
+  const visibleExistingFeatures = activeExistingFeatures.filter(item => {
+    const text = `${item.name ?? ''} ${item.description ?? item.summary ?? ''} ${item.module_path ?? ''} ${(item.evidence_files ?? []).join(' ')} ${(item.key_symbols ?? []).map((s: any) => typeof s === 'string' ? s : s.name).join(' ')}`.toLowerCase();
+    const matchesQuery = text.includes(existingFeatureQuery.trim().toLowerCase());
+    const matchesCategory = existingFeatureCategory === 'all' || String(item.category ?? '') === existingFeatureCategory;
+    return matchesQuery && matchesCategory;
+  });
   const modules = Array.isArray(summary?.modules) ? summary.modules : [];
   const directoryTree = Array.isArray(report?.directory_tree) ? report.directory_tree : [];
   const apiRoutes = Array.isArray(summary?.api_routes) ? summary.api_routes : [];
@@ -672,6 +704,23 @@ function AnalysisPage() {
     setSelectedAreaId(id);
     setAnalysisView('modules');
   };
+  const extractAiFeatures = async () => {
+    if (!analysis) return;
+    setExtractingFeatures(true);
+    setError('');
+    try {
+      const updated = await request<AnalysisRecord>(`${apiUrl}/analyses/${analysis.id}/features`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider: featureProvider }),
+      });
+      setAnalysis(updated);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not extract AI feature descriptions.');
+    } finally {
+      setExtractingFeatures(false);
+    }
+  };
 
   return (
     <div className="page">
@@ -731,6 +780,7 @@ function AnalysisPage() {
               <div className="analysis-tabs" role="tablist" aria-label="Repository analysis views">
                 {([
                   ['overview', 'Overview'],
+                  ['existing_features', 'Existing features', activeExistingFeatures.length],
                   ['features', 'Feature map', featureAreas.length],
                   ['structure', 'File structure'],
                   ['modules', 'Module map', featureAreas.length],
@@ -747,6 +797,18 @@ function AnalysisPage() {
               </div>
 
               {analysisView === 'overview' && <div id="analysis-panel-overview" role="tabpanel" aria-labelledby="analysis-tab-overview" className="analysis-view-grid">
+                <section className="panel analysis-card analysis-card-wide">
+                  <div className="panel-head"><div><span className="eyebrow">Repository purpose</span><h2>What this repository is about</h2></div><span className="status gray">{repositoryProfile?.repository_kind ?? 'Commit pinned'}</span></div>
+                  <div className="analysis-card-body">
+                    <p className="analysis-summary-copy">{aiRepositoryOverview || repositoryProfile?.about || 'This report is grounded in the selected snapshot. Browse existing features, detected source areas, repository files, and statically resolved module calls in the tabs above.'}</p>
+                    <div className="tag-list">
+                      {repositoryProfile?.primary_language && <span className="analysis-tag">Primary: {repositoryProfile.primary_language}</span>}
+                      {repositoryProfile?.license && <span className="analysis-tag">License: {repositoryProfile.license}</span>}
+                      {(nicheDetails?.architecture_patterns ?? []).map((pattern: string) => <span className="analysis-tag" key={pattern}>{pattern}</span>)}
+                      {(repositoryProfile?.keywords ?? []).map((kw: string) => <span className="analysis-tag" key={kw}>{kw}</span>)}
+                    </div>
+                  </div>
+                </section>
                 <section className="panel analysis-card">
                   <div className="panel-head"><div><span className="eyebrow">Repository overview</span><h2>Architecture at a glance</h2></div><span className="status gray">Commit pinned</span></div>
                   <div className="analysis-card-body">
@@ -799,6 +861,131 @@ function AnalysisPage() {
                   </div>
                 </section>
               </div>}
+
+              {analysisView === 'existing_features' && <section id="analysis-panel-existing_features" role="tabpanel" aria-labelledby="analysis-tab-existing_features" className="analysis-feature-view">
+                <div className="analysis-view-intro">
+                  <div>
+                    <span className="eyebrow">Code & documentation intelligence</span>
+                    <h2>Existing features & niche details</h2>
+                    <p>Capabilities, public API symbols, and architectural details extracted directly from source modules, manifests, and README sections.</p>
+                  </div>
+                  <div className="analysis-feature-filters">
+                    <input type="search" aria-label="Filter existing features" placeholder="Filter features or symbols" value={existingFeatureQuery} onChange={event => setExistingFeatureQuery(event.target.value)} />
+                    <select aria-label="Filter existing features by category" value={existingFeatureCategory} onChange={event => setExistingFeatureCategory(event.target.value)}>
+                      <option value="all">All categories</option>
+                      {existingFeatureCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                    </select>
+                    <select aria-label="Select LLM provider for feature extraction" value={featureProvider} onChange={event => setFeatureProvider(event.target.value as 'openrouter' | 'ollama')}>
+                      <option value="openrouter">OpenRouter</option>
+                      <option value="ollama">Ollama</option>
+                    </select>
+                    <button type="button" className="secondary-button" onClick={extractAiFeatures} disabled={extractingFeatures}>
+                      {extractingFeatures ? 'Extracting…' : aiExistingFeatures.length > 0 ? 'Refresh AI descriptions' : 'Generate AI descriptions'}
+                    </button>
+                  </div>
+                </div>
+                {aiRepositoryOverview && <div className="panel analysis-card" style={{ marginBottom: 14 }}>
+                  <div className="panel-head">
+                    <div><span className="eyebrow">Vector-grounded AI summary</span><h3>Repository overview</h3></div>
+                    {summary?.ai_features_model && <span className="status gray">{summary.ai_features_provider} · {summary.ai_features_model}</span>}
+                  </div>
+                  <div className="analysis-card-body"><p className="analysis-summary-copy">{aiRepositoryOverview}</p></div>
+                </div>}
+                {aiFeatureInventory.length > 0 && <div className="panel analysis-card" style={{ marginBottom: 14 }}>
+                  <div className="panel-head">
+                    <div><span className="eyebrow">Capability & gap matrix</span><h3>Feature inventory ({aiFeatureInventory.length})</h3></div>
+                    <span className="status gray">IMPLEMENTED / PARTIAL / MISSING</span>
+                  </div>
+                  <div className="analysis-card-body">
+                    {Object.entries(aiFeatureInventory.reduce<Record<string, Array<Record<string, any>>>>((acc, item) => {
+                      const cat = String(item.category ?? 'General');
+                      (acc[cat] ??= []).push(item);
+                      return acc;
+                    }, {})).map(([domain, items]) => <div key={domain} style={{ marginBottom: 14 }}>
+                      <h4>{domain}</h4>
+                      <div className="analysis-existing-grid">
+                        {items.map((item, idx) => <article className="panel analysis-card analysis-existing-card" key={`${item.feature}-${idx}`}>
+                          <div className="panel-head">
+                            <div><h3>{item.feature}</h3></div>
+                            <span className={`status ${item.status === 'IMPLEMENTED' ? 'green' : item.status === 'PARTIAL' ? 'amber' : 'red'}`}>{item.status}</span>
+                          </div>
+                          <div className="analysis-card-body">
+                            {Array.isArray(item.public_apis) && item.public_apis.length > 0 && <div className="tag-list" style={{ marginBottom: 6 }}>
+                              {item.public_apis.map((api: string) => <code className="analysis-tag" key={api}>{api}</code>)}
+                            </div>}
+                            {Array.isArray(item.capabilities) && item.capabilities.length > 0 && <ul style={{ margin: '4px 0', paddingLeft: 18 }}>
+                              {item.capabilities.slice(0, 4).map((cap: string) => <li key={cap}>{cap}</li>)}
+                            </ul>}
+                            {Array.isArray(item.limitations) && item.limitations.length > 0 && <p className="analysis-hint" style={{ marginTop: 6 }}>
+                              <b>Limitations:</b> {item.limitations.join('; ')}
+                            </p>}
+                          </div>
+                        </article>)}
+                      </div>
+                    </div>)}
+                  </div>
+                </div>}
+                {visibleExistingFeatures.length === 0
+                  ? <div className="empty-state compact">No existing features match the current filter. Click "Generate AI descriptions" or re-run analysis on the snapshot.</div>
+                  : <div className="analysis-existing-grid">
+                    {visibleExistingFeatures.map((item, idx) => <article className="panel analysis-card analysis-existing-card" key={`${item.name}-${idx}`}>
+                      <div className="panel-head">
+                        <div>
+                          <span className="eyebrow">{item.category ?? 'Feature'}</span>
+                          <h3>{item.name}</h3>
+                        </div>
+                        <span className="status gray">{item.description ? 'AI + Vector' : item.source === 'code' ? 'Source' : item.source}</span>
+                      </div>
+                      <div className="analysis-card-body">
+                        {item.module_path && <p><code>{item.module_path}</code></p>}
+                        <p className="analysis-summary-copy">{item.description ?? item.summary}</p>
+                        {(item.file_count > 0 || item.test_file_count > 0) && <div className="analysis-feature-stats">
+                          <span><b>{item.file_count ?? 0}</b> files</span>
+                          <span><b>{item.test_file_count ?? 0}</b> test files</span>
+                          <span><b>{(item.api_routes ?? []).length}</b> routes</span>
+                          <span><b>{(item.database_entities ?? []).length}</b> entities</span>
+                        </div>}
+                        {Array.isArray(item.evidence_files) && item.evidence_files.length > 0 && <>
+                          <h4>Evidence files</h4>
+                          <div className="tag-list">
+                            {item.evidence_files.map((fp: string) => <code className="analysis-tag" key={fp}>{fp}</code>)}
+                          </div>
+                        </>}
+                        {Array.isArray(item.key_symbols) && item.key_symbols.length > 0 && <>
+                          <h4>Key symbols</h4>
+                          <div className="tag-list">
+                            {item.key_symbols.map((sym: any, symIdx: number) => typeof sym === 'string'
+                              ? <code className="analysis-tag" key={`${sym}-${symIdx}`}>{sym}</code>
+                              : <code className="analysis-tag" key={`${sym.name}-${symIdx}`} title={`${sym.file_path}:${sym.start_line}`}>{sym.kind}: {sym.name}</code>)}
+                          </div>
+                        </>}
+                      </div>
+                    </article>)}
+                  </div>}
+                {nicheDetails && <div className="analysis-view-grid" style={{ marginTop: 14 }}>
+                  <section className="panel analysis-card">
+                    <div className="panel-head"><div><span className="eyebrow">Public API surface</span><h2>Exported & primary symbols</h2></div><span>{(nicheDetails.public_api_surface ?? []).length} shown</span></div>
+                    <div className="analysis-card-body">
+                      {(nicheDetails.public_api_surface ?? []).slice(0, 16).map((sym: any, idx: number) => <div className="analysis-reference" key={`${sym.file_path}-${sym.name}-${idx}`}>
+                        <strong>{sym.name} <small>({sym.kind})</small></strong>
+                        <code>{sym.file_path}:{sym.start_line}</code>
+                      </div>)}
+                      {!(nicheDetails.public_api_surface ?? []).length && <p>No public symbols extracted.</p>}
+                    </div>
+                  </section>
+                  <section className="panel analysis-card">
+                    <div className="panel-head"><div><span className="eyebrow">Niche internals</span><h2>Imports, tooling & patterns</h2></div></div>
+                    <div className="analysis-card-body">
+                      <h3>Architecture patterns</h3>
+                      <div className="tag-list">{(nicheDetails.architecture_patterns ?? []).map((p: string) => <span className="analysis-tag" key={p}>{p}</span>)}</div>
+                      <h3>Top imported modules</h3>
+                      <div className="tag-list">{(nicheDetails.top_imported_modules ?? []).slice(0, 14).map((imp: any) => <code className="analysis-tag" key={imp.module}>{imp.module} ({imp.count})</code>)}</div>
+                      <h3>Config & tooling files</h3>
+                      <div className="tag-list">{(nicheDetails.config_and_tooling ?? []).slice(0, 14).map((cfg: string) => <code className="analysis-tag" key={cfg}>{cfg}</code>)}</div>
+                    </div>
+                  </section>
+                </div>}
+              </section>}
 
               {analysisView === 'features' && <section id="analysis-panel-features" role="tabpanel" aria-labelledby="analysis-tab-features" className="analysis-feature-view">
                 <div className="analysis-view-intro">
@@ -1138,171 +1325,171 @@ function SettingsPage() {
       {notice && <div className="inline-notice" role="status">{notice}</div>}
 
       <div className="metric-grid" style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', maxWidth: '820px' }}>
-            <div className="metric-card">
-              <span>Configured Agents</span>
-              <strong>{agents.length}</strong>
-              <small>Registered AI runtimes</small>
-            </div>
-            <div className="metric-card">
-              <span>Ready for Benchmarks</span>
-              <strong style={{ color: '#247044' }}>{readyCount}</strong>
-              <small>Active & verified harnesses</small>
-            </div>
-            <div className="metric-card">
-              <span>Offline / Draft</span>
-              <strong style={{ color: '#667085' }}>{offlineCount}</strong>
-              <small>Pending configuration</small>
-            </div>
+        <div className="metric-card">
+          <span>Configured Agents</span>
+          <strong>{agents.length}</strong>
+          <small>Registered AI runtimes</small>
+        </div>
+        <div className="metric-card">
+          <span>Ready for Benchmarks</span>
+          <strong style={{ color: '#247044' }}>{readyCount}</strong>
+          <small>Active & verified harnesses</small>
+        </div>
+        <div className="metric-card">
+          <span>Offline / Draft</span>
+          <strong style={{ color: '#667085' }}>{offlineCount}</strong>
+          <small>Pending configuration</small>
+        </div>
+      </div>
+
+      <div className="filter-bar">
+        <div className="search-field" style={{ background: 'white', border: '1px solid #d0d5dd', borderRadius: 8, padding: '0 10px' }}>
+          <input
+            className="filter-search"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Filter agents by name, model, provider…"
+          />
+        </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <div className="filter-pills">
+            <button
+              className={`pill-button ${statusFilter === 'all' ? 'active' : ''}`}
+              onClick={() => setStatusFilter('all')}
+            >
+              All ({agents.length})
+            </button>
+            <button
+              className={`pill-button ${statusFilter === 'ready' ? 'active' : ''}`}
+              onClick={() => setStatusFilter('ready')}
+            >
+              Ready ({readyCount})
+            </button>
+            <button
+              className={`pill-button ${statusFilter === 'offline' ? 'active' : ''}`}
+              onClick={() => setStatusFilter('offline')}
+            >
+              Offline ({offlineCount})
+            </button>
           </div>
+          <button
+            className="secondary-button"
+            onClick={handleSeedDefaults}
+            disabled={seeding}
+            title="Populate recommended agent baselines (Codex, Claude Code, Antigravity, Gemini CLI, Harbor)"
+          >
+            <RefreshCw size={14} />
+            {seeding ? 'Seeding…' : 'Seed Defaults'}
+          </button>
+        </div>
+      </div>
 
-          <div className="filter-bar">
-            <div className="search-field" style={{ background: 'white', border: '1px solid #d0d5dd', borderRadius: 8, padding: '0 10px' }}>
-              <input
-                className="filter-search"
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                placeholder="Filter agents by name, model, provider…"
-              />
-            </div>
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-              <div className="filter-pills">
-                <button
-                  className={`pill-button ${statusFilter === 'all' ? 'active' : ''}`}
-                  onClick={() => setStatusFilter('all')}
-                >
-                  All ({agents.length})
-                </button>
-                <button
-                  className={`pill-button ${statusFilter === 'ready' ? 'active' : ''}`}
-                  onClick={() => setStatusFilter('ready')}
-                >
-                  Ready ({readyCount})
-                </button>
-                <button
-                  className={`pill-button ${statusFilter === 'offline' ? 'active' : ''}`}
-                  onClick={() => setStatusFilter('offline')}
-                >
-                  Offline ({offlineCount})
-                </button>
-              </div>
-              <button
-                className="secondary-button"
-                onClick={handleSeedDefaults}
-                disabled={seeding}
-                title="Populate recommended agent baselines (Codex, Claude Code, Antigravity, Gemini CLI, Harbor)"
-              >
-                <RefreshCw size={14} />
-                {seeding ? 'Seeding…' : 'Seed Defaults'}
-              </button>
-            </div>
+      {loading ? (
+        <div className="empty-state compact">Loading agents…</div>
+      ) : filteredAgents.length === 0 ? (
+        <section className="panel empty-state">
+          <h2>No coding agents found</h2>
+          <p>Register a coding agent (Harbor or Direct CLI) or seed defaults to start benchmarking.</p>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 14 }}>
+            <button
+              className="primary-button"
+              onClick={() => {
+                setEditingAgent(null);
+                setModalOpen(true);
+              }}
+            >
+              <Plus size={16} /> Register agent
+            </button>
+            <button className="secondary-button" onClick={handleSeedDefaults} disabled={seeding}>
+              Seed default agents
+            </button>
           </div>
+        </section>
+      ) : (
+        <div className="agent-grid">
+          {filteredAgents.map(agent => {
+            const initials =
+              agent.name
+                .split(' ')
+                .map(w => w[0])
+                .filter(Boolean)
+                .slice(0, 2)
+                .join('')
+                .toUpperCase() || 'AG';
+            const isReady = agent.status === 'ready';
 
-          {loading ? (
-            <div className="empty-state compact">Loading agents…</div>
-          ) : filteredAgents.length === 0 ? (
-            <section className="panel empty-state">
-              <h2>No coding agents found</h2>
-              <p>Register a coding agent (Harbor or Direct CLI) or seed defaults to start benchmarking.</p>
-              <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 14 }}>
-                <button
-                  className="primary-button"
-                  onClick={() => {
-                    setEditingAgent(null);
-                    setModalOpen(true);
-                  }}
-                >
-                  <Plus size={16} /> Register agent
-                </button>
-                <button className="secondary-button" onClick={handleSeedDefaults} disabled={seeding}>
-                  Seed default agents
-                </button>
-              </div>
-            </section>
-          ) : (
-            <div className="agent-grid">
-              {filteredAgents.map(agent => {
-                const initials =
-                  agent.name
-                    .split(' ')
-                    .map(w => w[0])
-                    .filter(Boolean)
-                    .slice(0, 2)
-                    .join('')
-                    .toUpperCase() || 'AG';
-                const isReady = agent.status === 'ready';
-
-                return (
-                  <div key={agent.id} className="agent-card-item">
-                    <div>
-                      <div className="agent-card-head">
-                        <div className="agent-card-identity">
-                          <div className="agent-avatar-badge">{initials}</div>
-                          <div className="agent-card-meta">
-                            <strong>{agent.name}</strong>
-                            <div className="agent-tags">
-                              <span className="tag-badge provider">{agent.provider}</span>
-                              <span className="tag-badge adapter">{agent.adapterType}</span>
-                            </div>
-                          </div>
+            return (
+              <div key={agent.id} className="agent-card-item">
+                <div>
+                  <div className="agent-card-head">
+                    <div className="agent-card-identity">
+                      <div className="agent-avatar-badge">{initials}</div>
+                      <div className="agent-card-meta">
+                        <strong>{agent.name}</strong>
+                        <div className="agent-tags">
+                          <span className="tag-badge provider">{agent.provider}</span>
+                          <span className="tag-badge adapter">{agent.adapterType}</span>
                         </div>
-                        <span className={`status ${isReady ? 'green' : 'gray'}`}>
-                          {isReady ? 'Ready' : 'Offline'}
-                        </span>
-                      </div>
-
-                      <div className="agent-card-body" style={{ marginTop: 12 }}>
-                        <p>{agent.description || 'No description provided.'}</p>
                       </div>
                     </div>
+                    <span className={`status ${isReady ? 'green' : 'gray'}`}>
+                      {isReady ? 'Ready' : 'Offline'}
+                    </span>
+                  </div>
 
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                      <div className="agent-card-specs">
-                        <span>Model: <strong>{agent.modelName || 'unassigned'}</strong></span>
-                        <span>Config: <strong>v{agent.configs?.length || 1}</strong></span>
-                        <span>Mode: <strong>{agent.settings?.executionMode || 'docker-sandbox'}</strong></span>
-                        {agent.settings?.timeoutMinutes && (
-                          <span>Timeout: <strong>{agent.settings.timeoutMinutes}m</strong></span>
-                        )}
-                      </div>
+                  <div className="agent-card-body" style={{ marginTop: 12 }}>
+                    <p>{agent.description || 'No description provided.'}</p>
+                  </div>
+                </div>
 
-                      <div className="agent-card-actions">
-                        <button
-                          className={`secondary-button ${isReady ? '' : 'primary-button'}`}
-                          style={{ height: 32, fontSize: 12, padding: '0 10px' }}
-                          onClick={() => handleToggleStatus(agent)}
-                        >
-                          <Power size={13} />
-                          {isReady ? 'Set Offline' : 'Set Ready'}
-                        </button>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div className="agent-card-specs">
+                    <span>Model: <strong>{agent.modelName || 'unassigned'}</strong></span>
+                    <span>Config: <strong>v{agent.configs?.length || 1}</strong></span>
+                    <span>Mode: <strong>{agent.settings?.executionMode || 'docker-sandbox'}</strong></span>
+                    {agent.settings?.timeoutMinutes && (
+                      <span>Timeout: <strong>{agent.settings.timeoutMinutes}m</strong></span>
+                    )}
+                  </div>
 
-                        <div className="action-group">
-                          <button
-                            className="secondary-button"
-                            style={{ height: 32, fontSize: 12, padding: '0 10px' }}
-                            onClick={() => {
-                              setEditingAgent(agent);
-                              setModalOpen(true);
-                            }}
-                            title="Edit agent parameters"
-                          >
-                            <Edit2 size={13} /> Edit
-                          </button>
-                          <button
-                            className="secondary-button danger-button"
-                            style={{ height: 32, fontSize: 12, padding: '0 10px' }}
-                            onClick={() => handleDeleteAgent(agent)}
-                            title="Delete agent"
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        </div>
-                      </div>
+                  <div className="agent-card-actions">
+                    <button
+                      className={`secondary-button ${isReady ? '' : 'primary-button'}`}
+                      style={{ height: 32, fontSize: 12, padding: '0 10px' }}
+                      onClick={() => handleToggleStatus(agent)}
+                    >
+                      <Power size={13} />
+                      {isReady ? 'Set Offline' : 'Set Ready'}
+                    </button>
+
+                    <div className="action-group">
+                      <button
+                        className="secondary-button"
+                        style={{ height: 32, fontSize: 12, padding: '0 10px' }}
+                        onClick={() => {
+                          setEditingAgent(agent);
+                          setModalOpen(true);
+                        }}
+                        title="Edit agent parameters"
+                      >
+                        <Edit2 size={13} /> Edit
+                      </button>
+                      <button
+                        className="secondary-button danger-button"
+                        style={{ height: 32, fontSize: 12, padding: '0 10px' }}
+                        onClick={() => handleDeleteAgent(agent)}
+                        title="Delete agent"
+                      >
+                        <Trash2 size={13} />
+                      </button>
                     </div>
                   </div>
-                );
-              })}
-            </div>
-          )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {modalOpen && (
         <AgentModal
@@ -1621,6 +1808,15 @@ type TaskCandidate = {
   description: string;
   category: string;
   difficulty: string;
+  problem_statement?: string;
+  existing_behavior?: string;
+  proposed_behavior?: string;
+  functional_gap?: string;
+  proposed_public_api?: string;
+  edge_cases?: string[];
+  regression_requirements?: string[];
+  test_scenarios?: string[];
+  out_of_scope_changes?: string[];
   requirements: string[];
   acceptance_criteria: string[];
   constraints: string[];
@@ -1634,6 +1830,15 @@ type TaskCandidate = {
     end_line: number;
     symbol?: string | null;
   }>;
+  verification?: {
+    decision?: 'APPROVED' | 'REJECTED' | 'NEEDS_REVISION';
+    reason?: string;
+    feature_already_exists?: boolean;
+    within_scope?: boolean;
+    is_testable?: boolean;
+    is_specific?: boolean;
+    source_evidence?: string[];
+  };
 };
 
 type SavedTask = {
@@ -1704,13 +1909,17 @@ type ReferenceSolution = {
 };
 
 const taskCategories = [
-  ['feature', 'Feature implementation'],
-  ['bug_fix', 'Bug fixing'],
+  ['feature', 'New feature'],
+  ['feature_enhancement', 'Feature enhancement'],
+  ['bug_fix', 'Bug fix'],
   ['api_enhancement', 'API enhancement'],
+  ['performance', 'Performance optimization'],
+  ['benchmarking', 'Benchmarking'],
   ['refactoring', 'Refactoring'],
+  ['test_improvement', 'Testing'],
+  ['documentation', 'Documentation'],
+  ['ui_enhancement', 'UI enhancement'],
   ['database_change', 'Database change'],
-  ['performance', 'Performance improvement'],
-  ['test_improvement', 'Test improvement'],
 ] as const;
 
 function TaskGeneratorPage() {
@@ -1727,6 +1936,8 @@ function TaskGeneratorPage() {
   const [provider, setProvider] = useState<TaskProvider | ''>('');
   const [category, setCategory] = useState('feature');
   const [difficulty, setDifficulty] = useState('medium');
+  const [scopeFilter, setScopeFilter] = useState<'core_library' | 'all'>('core_library');
+  const [verifyTasks, setVerifyTasks] = useState(true);
   const [constraints, setConstraints] = useState('');
   const [count, setCount] = useState(3);
   const [busy, setBusy] = useState(false);
@@ -1795,7 +2006,7 @@ function TaskGeneratorPage() {
     }
     setBusy(true);
     try {
-      const result = await request<TaskGeneration>(`${apiUrl}/projects/${projectId}/tasks/suggest`, {
+      const result = await request<TaskGeneration & { rejected_tasks?: Array<Record<string, any>> }>(`${apiUrl}/projects/${projectId}/tasks/suggest`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -1804,6 +2015,9 @@ function TaskGeneratorPage() {
           userIdea: idea.trim() || undefined,
           category,
           difficulty,
+          scopeFilter,
+          taskCategories: [category],
+          verifyTasks,
           constraints: constraints.split(/\r?\n/).map(line => line.trim()).filter(Boolean),
           count,
         }),
@@ -1812,7 +2026,11 @@ function TaskGeneratorPage() {
       setCandidateIndex(0);
       setDraft(result.candidates?.[0] ?? null);
       setHistory(current => [result, ...current.filter(run => run.id !== result.id)]);
-      setNotice(`Generated ${result.candidates?.length ?? 0} repository-grounded draft(s) with ${result.provider} · ${result.model}.`);
+      const rejectedCount = result.rejected_tasks?.length ?? 0;
+      setNotice(
+        `Generated ${result.candidates?.length ?? 0} verified draft(s) with ${result.provider} · ${result.model}` +
+        (rejectedCount > 0 ? ` (${rejectedCount} duplicate/out-of-scope candidate(s) filtered by verifier).` : '.'),
+      );
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Task generation failed.');
     } finally {
@@ -1895,6 +2113,18 @@ function TaskGeneratorPage() {
           <label>Category<select value={category} onChange={event => setCategory(event.target.value)}>{taskCategories.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           <label>Difficulty<select value={difficulty} onChange={event => setDifficulty(event.target.value)}><option value="easy">Easy</option><option value="medium">Medium</option><option value="hard">Hard</option></select></label>
         </div>
+        <div className="field-grid">
+          <label>Module scope
+            <select value={scopeFilter} onChange={event => setScopeFilter(event.target.value as 'core_library' | 'all')}>
+              <option value="core_library">Core library only</option>
+              <option value="all">All modules (incl. docs/bench)</option>
+            </select>
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, paddingTop: 20 }}>
+            <input type="checkbox" checked={verifyTasks} onChange={event => setVerifyTasks(event.target.checked)} style={{ width: 'auto' }} />
+            <span>Verify against existing features</span>
+          </label>
+        </div>
         <label>Additional constraints (one per line)
           <textarea value={constraints} onChange={event => setConstraints(event.target.value)} placeholder={'Keep current API behavior backward compatible\nInclude invalid-input and boundary cases'} />
         </label>
@@ -1940,8 +2170,23 @@ function TaskGeneratorPage() {
         <div className="task-candidate-tabs" role="tablist" aria-label="Task suggestions">{generation.candidates.map((candidate, index) => <button type="button" className={index === candidateIndex ? 'selected' : ''} key={`${candidate.title}-${index}`} onClick={() => selectCandidate(index)}>Draft {index + 1}<small>{candidate.title}</small></button>)}</div>
         {selectedCandidate && <div className="task-review-grid">
           <div className="task-review-fields">
+            {draft.verification?.decision && <div className="inline-notice" style={{ marginBottom: 10 }}>
+              <span className={`status ${draft.verification.decision === 'APPROVED' ? 'green' : draft.verification.decision === 'REJECTED' ? 'red' : 'amber'}`} style={{ marginRight: 8 }}>
+                {draft.verification.decision}
+              </span>
+              <span>{draft.verification.reason || 'Verified against repository context.'}</span>
+            </div>}
             <label>Title<input value={draft.title} maxLength={160} onChange={event => changeDraft('title', event.target.value)} /></label>
             <label>Description<textarea value={draft.description} maxLength={3000} rows={4} onChange={event => changeDraft('description', event.target.value)} /></label>
+            {draft.functional_gap && <label>Functional gap<textarea value={draft.functional_gap} rows={2} onChange={event => changeDraft('functional_gap', event.target.value)} /></label>}
+            {(draft.existing_behavior || draft.proposed_behavior) && <div className="field-grid">
+              <label>Existing behavior<textarea value={draft.existing_behavior ?? ''} rows={3} onChange={event => changeDraft('existing_behavior', event.target.value)} /></label>
+              <label>Proposed behavior<textarea value={draft.proposed_behavior ?? ''} rows={3} onChange={event => changeDraft('proposed_behavior', event.target.value)} /></label>
+            </div>}
+            {draft.proposed_public_api && <div>
+              <span className="eyebrow">Proposed public API</span>
+              <pre style={{ background: '#0f172a', color: '#e2e8f0', padding: '10px 12px', borderRadius: 8, overflowX: 'auto', fontSize: 12 }}><code>{draft.proposed_public_api}</code></pre>
+            </div>}
             <div className="field-grid"><label>Category<select value={draft.category} onChange={event => changeDraft('category', event.target.value)}>{taskCategories.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>Difficulty<select value={draft.difficulty} onChange={event => changeDraft('difficulty', event.target.value)}><option value="easy">Easy</option><option value="medium">Medium</option><option value="hard">Hard</option></select></label></div>
             <label>Requirements (one per line)<textarea rows={5} value={draft.requirements.join('\n')} onChange={event => changeDraft('requirements', event.target.value.split(/\r?\n/))} /></label>
             <label>Acceptance criteria (one per line)<textarea rows={5} value={draft.acceptance_criteria.join('\n')} onChange={event => changeDraft('acceptance_criteria', event.target.value.split(/\r?\n/))} /></label>

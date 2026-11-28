@@ -42,7 +42,7 @@ services:
       REPOSITORY_SCAN_ROOT: /workspace/storage
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
-      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-4o-mini}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-baidu/ernie-5.5-flash-preview:free}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
       TASK_CONTEXT_TOKEN_BUDGET: ${TASK_CONTEXT_TOKEN_BUDGET:-10000}

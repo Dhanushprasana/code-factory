@@ -12,15 +12,18 @@ from typing import Any
 from tree_sitter_language_pack import get_parser
 
 
-ANALYZER_VERSION = "0.1.1"
+from app.embeddings import embed_texts_sync
+
+ANALYZER_VERSION = "0.2.0"
 MAX_FILES = 25_000
 MAX_METADATA_SOURCE_FILES = 15_000
 MAX_SOURCE_FILES = 5_000
 MAX_FILE_BYTES = 512_000
 MAX_TOTAL_SOURCE_BYTES = 100_000_000
 MAX_TREE_ENTRIES = 2_000
-MAX_GRAPH_NODES = 2_000
-MAX_GRAPH_EDGES = 5_000
+MAX_GRAPH_NODES = 10_000
+MAX_GRAPH_EDGES = 25_000
+MAX_EMBEDDED_CHUNKS = 350
 
 IGNORED_DIRECTORIES = {
     ".git",
@@ -67,7 +70,15 @@ SECRET_NAME = re.compile(
     re.IGNORECASE,
 )
 SOURCE_EXTENSIONS = {
+    ".c": "c",
+    ".cc": "cpp",
     ".cjs": "javascript",
+    ".cpp": "cpp",
+    ".cxx": "cpp",
+    ".h": "cpp",
+    ".hh": "cpp",
+    ".hpp": "cpp",
+    ".hxx": "cpp",
     ".js": "javascript",
     ".jsx": "javascript",
     ".mjs": "javascript",
@@ -78,12 +89,17 @@ SOURCE_EXTENSIONS = {
 DECLARATION_TYPES = {
     "class_declaration",
     "class_definition",
+    "class_specifier",
     "enum_declaration",
+    "enum_specifier",
     "function_declaration",
     "function_definition",
     "interface_declaration",
     "method_definition",
+    "namespace_definition",
+    "struct_specifier",
     "type_alias_declaration",
+    "type_definition",
 }
 IMPORT_PATTERN = re.compile(
     r"""(?:\bfrom\s*["']([^"']+)["']|\bimport\s*["']([^"']+)["']|"""
@@ -239,6 +255,32 @@ def _add_graph_node(
     return True
 
 
+def _cpp_declarator_name(node: Any, source: bytes) -> str:
+    """Extract symbol name from C/C++ declarator AST nodes."""
+    current = node
+    for _ in range(8):
+        if current is None:
+            return ""
+        if current.type in {"identifier", "field_identifier", "type_identifier", "namespace_identifier", "destructor_name"}:
+            return source[current.start_byte:current.end_byte].decode("utf-8", errors="replace").strip()
+        if current.type == "qualified_identifier":
+            return source[current.start_byte:current.end_byte].decode("utf-8", errors="replace").strip()
+        next_node = current.child_by_field_name("declarator") or current.child_by_field_name("name")
+        if next_node is None:
+            next_node = next(
+                (
+                    child for child in current.children
+                    if child.type in {
+                        "function_declarator", "pointer_declarator", "reference_declarator",
+                        "qualified_identifier", "identifier", "field_identifier", "destructor_name",
+                    }
+                ),
+                None,
+            )
+        current = next_node
+    return ""
+
+
 def _parse_symbols(
     path: Path,
     root: Path,
@@ -259,38 +301,88 @@ def _parse_symbols(
     symbols: list[dict[str, Any]] = []
     imports: list[str] = []
     calls: list[tuple[str, int, str]] = []
+    seen_symbol_keys: set[tuple[str, int]] = set()
     stack: list[tuple[Any, tuple[str, int] | None]] = [(tree.root_node, None)]
     while stack:
         node, owner = stack.pop()
         child_owner = owner
         if node.type in DECLARATION_TYPES:
+            name = ""
             name_node = node.child_by_field_name("name")
             if name_node is None:
+                declarator = node.child_by_field_name("declarator")
+                if declarator is not None:
+                    name = _cpp_declarator_name(declarator, source)
+            if not name and name_node is None:
                 name_node = next(
-                    (child for child in node.children if child.type in ("identifier", "type_identifier")),
+                    (
+                        child for child in node.children
+                        if child.type in ("identifier", "type_identifier", "namespace_identifier")
+                    ),
                     None,
                 )
-            if name_node is not None:
+            if not name and name_node is not None:
                 name = source[name_node.start_byte:name_node.end_byte].decode(
                     "utf-8", errors="replace"
-                )
-                if name:
-                    child_owner = (name, node.start_point.row + 1)
+                ).strip()
+            if name:
+                start_line = node.start_point.row + 1
+                child_owner = (name, start_line)
+                if (name, start_line) not in seen_symbol_keys:
+                    seen_symbol_keys.add((name, start_line))
                     declaration = source[node.start_byte:node.end_byte].decode(
                         "utf-8", errors="replace"
                     )
                     symbols.append(
                         {
                             "name": name,
-                            "kind": node.type.removesuffix("_declaration").removesuffix("_definition"),
+                            "kind": (
+                                node.type.removesuffix("_declaration")
+                                .removesuffix("_definition")
+                                .removesuffix("_specifier")
+                            ),
                             "file_path": _relative(path, root),
-                            "start_line": node.start_point.row + 1,
+                            "start_line": start_line,
                             "end_line": node.end_point.row + 1,
                             "exported": bool(
                                 re.search(r"(?m)^\s*export\b", declaration)
                             ),
                         }
                     )
+        elif node.type in {"lexical_declaration", "variable_declaration"} and owner is None:
+            # Capture top-level TypeScript/JavaScript exported functions/consts (e.g. `export const z = ...`)
+            parent = node.parent
+            is_exported = parent is not None and parent.type == "export_statement"
+            for child in node.children:
+                if child.type != "variable_declarator":
+                    continue
+                var_name_node = child.child_by_field_name("name")
+                value_node = child.child_by_field_name("value")
+                if var_name_node is None:
+                    continue
+                var_name = source[var_name_node.start_byte:var_name_node.end_byte].decode(
+                    "utf-8", errors="replace"
+                ).strip()
+                if not var_name:
+                    continue
+                is_callable = value_node is not None and value_node.type in {
+                    "arrow_function", "function_expression", "function", "call_expression",
+                }
+                if is_exported or is_callable:
+                    start_line = node.start_point.row + 1
+                    child_owner = (var_name, start_line)
+                    if (var_name, start_line) not in seen_symbol_keys:
+                        seen_symbol_keys.add((var_name, start_line))
+                        symbols.append(
+                            {
+                                "name": var_name,
+                                "kind": "function" if value_node is not None and value_node.type in {"arrow_function", "function_expression", "function"} else "variable",
+                                "file_path": _relative(path, root),
+                                "start_line": start_line,
+                                "end_line": node.end_point.row + 1,
+                                "exported": is_exported,
+                            }
+                        )
         if node.type in {
             "import_statement",
             "import_from_statement",
@@ -301,6 +393,11 @@ def _parse_symbols(
                 imported = next((value for value in match.groups() if value), "")
                 if imported:
                     imports.append(imported)
+        elif node.type == "preproc_include":
+            snippet = source[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+            include_match = re.search(r'#include\s*[<"]([^>"]+)[>"]', snippet)
+            if include_match:
+                imports.append(include_match.group(1))
         if node.type in {"call", "call_expression"} and owner:
             function_node = node.child_by_field_name("function")
             if function_node is not None:
@@ -323,7 +420,7 @@ def _read_manifests(
     frameworks: set[str] = set()
     database: set[str] = set()
     orm: set[str] = set()
-    dependencies: dict[str, list[dict[str, str]]] = {"npm": [], "python": []}
+    dependencies: dict[str, list[dict[str, str]]] = {"npm": [], "python": [], "cpp": []}
     build_commands: set[str] = set()
     test_commands: set[str] = set()
     package_managers: set[str] = set()
@@ -363,6 +460,8 @@ def _read_manifests(
             "angular": "Angular",
             "svelte": "Svelte",
             "vite": "Vite",
+            "vitest": "Vitest",
+            "jest": "Jest",
         }
         frameworks.update(
             package_map[name] for name in all_dependencies if name in package_map
@@ -393,13 +492,15 @@ def _read_manifests(
         orm.update(orm_map[name] for name in all_dependencies if name in orm_map)
         scripts = package.get("scripts", {})
         if isinstance(scripts, dict):
-            for command_name in ("build", "typecheck", "lint"):
+            for command_name in ("build", "compile", "typecheck", "lint"):
                 if isinstance(scripts.get(command_name), str):
                     build_commands.add(f"npm run {command_name}")
             if isinstance(scripts.get("test"), str):
                 test_commands.add("npm run test")
             if isinstance(scripts.get("test:unit"), str):
                 test_commands.add("npm run test:unit")
+        if "vitest" in all_dependencies or (package_path.parent / "vitest.config.ts").exists() or (package_path.parent / "vitest.config.js").exists():
+            test_commands.add("vitest run")
     for name in paths_by_name:
         if name == "pnpm-lock.yaml":
             package_managers.add("pnpm")
@@ -443,15 +544,79 @@ def _read_manifests(
 
         optional_groups = project.get("dependency-groups", {})
         for group, values in optional_groups.items() if isinstance(optional_groups, dict) else []:
-            if group.lower() in ("dev", "test", "testing") and isinstance(values, list):
+            if group.lower() in ("dev", "test", "tests", "testing") and isinstance(values, list):
                 for dependency in values:
-                    if isinstance(dependency, str) and dependency.lower().startswith(("pytest", "tox")):
-                        test_commands.add("pytest")
-        if "pytest" in text.lower():
+                    if isinstance(dependency, str):
+                        name = re.split(r"[<>=!~;\[]", dependency, maxsplit=1)[0].strip()
+                        if name:
+                            dependencies["python"].append(
+                                {"name": name, "version": dependency[len(name):].strip() or "*", "group": group}
+                            )
+                        if dependency.lower().startswith(("pytest", "tox")):
+                            test_commands.add("pytest")
+        optional_deps = project_section.get("optional-dependencies", {})
+        for group, values in optional_deps.items() if isinstance(optional_deps, dict) else []:
+            if group.lower() in ("dev", "test", "tests", "testing") and isinstance(values, list):
+                for dependency in values:
+                    if isinstance(dependency, str):
+                        name = re.split(r"[<>=!~;\[]", dependency, maxsplit=1)[0].strip()
+                        if name:
+                            dependencies["python"].append(
+                                {"name": name, "version": dependency[len(name):].strip() or "*", "group": f"extra:{group}"}
+                            )
+                        if dependency.lower().startswith(("pytest", "tox")):
+                            test_commands.add("pytest")
+        if "pytest" in text.lower() or "pytest" in (project.get("tool", {}) if isinstance(project.get("tool"), dict) else {}):
             test_commands.add("pytest")
-        if "hatchling" in text.lower() or "setuptools" in text.lower():
+        if any(backend in text.lower() for backend in ("hatchling", "setuptools", "flit_core", "poetry-core")):
             build_commands.add("python -m build")
         package_managers.add("uv" if (pyproject_path.parent / "uv.lock").exists() else "pip")
+
+    for cmake_path in paths_by_name.get("cmakelists.txt", []):
+        if cmake_path.parent != root:
+            continue
+        text = _read_text(cmake_path, warnings)
+        if text is None:
+            continue
+        package_managers.add("cmake")
+        frameworks.add("CMake")
+        build_commands.add("cmake -S . -B build -DCMAKE_BUILD_TYPE=Release")
+        build_commands.add("cmake --build build -j2")
+        stripped_cmake = "\n".join(
+            line.split("#", 1)[0] for line in text.splitlines()
+        )
+        if re.search(r"\b(enable_testing|add_test|BUILD_TESTING)\b", stripped_cmake, re.I):
+            test_commands.add("ctest --test-dir build --output-on-failure")
+        for pkg_match in re.finditer(r"\bfind_package\s*\(\s*([A-Za-z0-9_+-]+)", stripped_cmake, re.I):
+            dependencies["cpp"].append(
+                {"name": pkg_match.group(1), "version": "*", "group": "cmake"}
+            )
+
+    for meson_path in paths_by_name.get("meson.build", []):
+        if meson_path.parent != root:
+            continue
+        text = _read_text(meson_path, warnings)
+        if text is None:
+            continue
+        package_managers.add("meson")
+        frameworks.add("Meson")
+        build_commands.add("meson setup build")
+        build_commands.add("meson compile -C build")
+        if re.search(r"\btest\s*\(", text):
+            test_commands.add("meson test -C build")
+
+    for vcpkg_path in paths_by_name.get("vcpkg.json", []):
+        text = _read_text(vcpkg_path, warnings)
+        if text is None:
+            continue
+        try:
+            vcpkg = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        for dep in vcpkg.get("dependencies", []) if isinstance(vcpkg, dict) else []:
+            dep_name = dep if isinstance(dep, str) else dep.get("name") if isinstance(dep, dict) else None
+            if isinstance(dep_name, str) and dep_name:
+                dependencies["cpp"].append({"name": dep_name, "version": "*", "group": "vcpkg"})
 
     for requirements_path in paths_by_name.get("requirements.txt", []):
         text = _read_text(requirements_path, warnings)
@@ -506,9 +671,14 @@ def _detect_language_counts(files: list[Path]) -> dict[str, int]:
         ".c": "C",
         ".cc": "C++",
         ".cpp": "C++",
+        ".cxx": "C++",
         ".cs": "C#",
         ".css": "CSS",
         ".go": "Go",
+        ".h": "C/C++ Header",
+        ".hh": "C++",
+        ".hpp": "C++",
+        ".hxx": "C++",
         ".html": "HTML",
         ".java": "Java",
         ".js": "JavaScript",
@@ -536,16 +706,42 @@ def _detect_language_counts(files: list[Path]) -> dict[str, int]:
     return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
 
 
+def _classify_module_scope(module_path: str) -> str:
+    lowered = module_path.replace("\\", "/").lower().strip("/")
+    parts = set(lowered.split("/"))
+    if any(marker in lowered for marker in ("/bench", "benchmarks", "typia-case")) or "bench" in parts or "perf" in parts:
+        return "benchmarks"
+    if any(marker in lowered for marker in ("apps/docs", "website", "landing", "showcase")) or "www" in parts or "blog" in parts:
+        return "website"
+    if any(marker in parts for marker in ("docs", "doc", "examples", "fixtures")):
+        return "documentation"
+    if any(marker in parts for marker in ("__tests__", "tests", "test", "e2e", "integration")):
+        return "tests"
+    if any(marker in parts for marker in ("scripts", "tooling", "tools", ".github", "ci", "build")):
+        return "tooling"
+    return "core_library"
+
+
 def _source_directories(files: list[Path], root: Path) -> list[dict[str, Any]]:
     workspace_roots = {"apps", "packages"}
-    source_roots = {"app", "src", "modules"}
+    source_roots = {"app", "src", "modules", "include", "lib"}
     modules: Counter[tuple[str, str]] = Counter()
     for path in files:
         parts = path.relative_to(root).parts
         module_parts = None
         for index, part in enumerate(parts[:-1]):
             if part.lower() in workspace_roots and index + 1 < len(parts) - 1:
-                module_parts = parts[:index + 2]
+                # If a workspace package has a nested `src/<submodule>` directory, surface `<submodule>`
+                # so monorepo libraries like `packages/zod/src/v4/...` get granular modules,
+                # while keeping shallow `packages/commerce/src/api.ts` at `packages/commerce`.
+                pkg_end = index + 2
+                if (
+                    pkg_end < len(parts) - 2
+                    and parts[pkg_end].lower() in source_roots
+                ):
+                    module_parts = parts[:pkg_end + 2]
+                else:
+                    module_parts = parts[:pkg_end]
                 break
         if module_parts is None:
             for index in range(len(parts) - 2, -1, -1):
@@ -659,23 +855,441 @@ def _extract_routes_and_entities(
     return routes, entities
 
 
-def _readme_features(root: Path, warnings: list[str]) -> list[dict[str, str]]:
-    for readme in (root / "README.md", root / "readme.md"):
+def _clean_markdown_line(text: str) -> str:
+    cleaned = html.unescape(text)
+    cleaned = re.sub(r"!\[[^\]]*\]\([^)]+\)", "", cleaned)
+    cleaned = re.sub(r"<[^>]*>", "", cleaned)
+    cleaned = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", cleaned)
+    cleaned = re.sub(r"`([^`]*)`", r"\1", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _readme_sections(root: Path, warnings: list[str]) -> tuple[str, list[dict[str, str]]]:
+    for name in ("README.md", "readme.md", "README.rst", "README.txt"):
+        readme = root / name
         if not readme.is_file():
             continue
         text = _read_text(readme, warnings)
         if text is None:
-            return []
-        headings: list[dict[str, str]] = []
-        for match in re.finditer(r"(?m)^#{1,3}\s+(.+?)\s*$", text):
-            name = html.unescape(match.group(1))
-            name = re.sub(r"<[^>]*>", "", name)
-            name = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", name)
-            name = re.sub(r"`([^`]*)`", r"\1", name).strip()
-            if name:
-                headings.append({"name": name, "source": readme.name})
-        return headings[:30]
-    return []
+            return "", []
+        lines = text.splitlines()
+        intro_lines: list[str] = []
+        sections: list[dict[str, str]] = []
+        current_heading: str | None = None
+        current_body: list[str] = []
+        in_code_block = False
+
+        def _flush_section() -> None:
+            if current_heading:
+                body_text = _clean_markdown_line(" ".join(current_body))
+                sections.append({
+                    "name": current_heading,
+                    "source": readme.name,
+                    "summary": body_text[:320] + ("..." if len(body_text) > 320 else ""),
+                })
+
+        for raw_line in lines:
+            stripped = raw_line.strip()
+            if stripped.startswith("```"):
+                in_code_block = not in_code_block
+                continue
+            if in_code_block:
+                continue
+            heading_match = re.match(r"^#{1,3}\s+(.+?)\s*$", stripped)
+            if heading_match:
+                _flush_section()
+                current_heading = _clean_markdown_line(heading_match.group(1))
+                current_body = []
+                continue
+            if not stripped or stripped.startswith("[![") or stripped.startswith("<img"):
+                continue
+            cleaned = _clean_markdown_line(stripped)
+            if not cleaned:
+                continue
+            if current_heading is None or (len(sections) == 0 and len(intro_lines) < 4):
+                if len(intro_lines) < 4:
+                    intro_lines.append(cleaned)
+            if current_heading is not None and len(current_body) < 5:
+                current_body.append(cleaned)
+        _flush_section()
+        about = " ".join(intro_lines)[:500]
+        return about, [item for item in sections if item["name"]][:30]
+    return "", []
+
+
+def _readme_features(root: Path, warnings: list[str]) -> list[dict[str, str]]:
+    _, sections = _readme_sections(root, warnings)
+    return sections
+
+
+def _extract_repository_profile(
+    root: Path,
+    readme_about: str,
+    manifests: dict[str, Any],
+    language_counts: dict[str, int],
+    routes: list[dict[str, Any]],
+    entry_points: list[str],
+    files: list[Path],
+) -> dict[str, Any]:
+    description = ""
+    license_name = ""
+    keywords: list[str] = []
+
+    pkg_path = root / "package.json"
+    if pkg_path.is_file():
+        try:
+            pkg = json.loads(pkg_path.read_text(encoding="utf-8", errors="replace"))
+            if isinstance(pkg, dict):
+                description = str(pkg.get("description") or "").strip()
+                license_name = str(pkg.get("license") or "").strip()
+                if isinstance(pkg.get("keywords"), list):
+                    keywords = [str(item).strip() for item in pkg["keywords"] if str(item).strip()][:12]
+        except ValueError:
+            pass
+
+    if not description:
+        pyproject_path = root / "pyproject.toml"
+        if pyproject_path.is_file():
+            py_text = pyproject_path.read_text(encoding="utf-8", errors="replace")
+            desc_match = re.search(r'(?m)^\s*description\s*=\s*["\']([^"\']+)["\']', py_text)
+            if desc_match:
+                description = desc_match.group(1).strip()
+
+    frameworks = manifests.get("frameworks", [])
+    if routes:
+        repo_kind = "Web API / Service"
+    elif any(f in frameworks for f in ("React", "Next.js", "Vue", "Angular", "Svelte")):
+        repo_kind = "Frontend / Web Application"
+    elif any("cli" in str(ep).lower() for ep in entry_points) or "click" in str(manifests.get("dependencies", {})).lower():
+        repo_kind = "CLI Tool / Library"
+    elif any(path.suffix.lower() in {".h", ".hpp", ".hh", ".hxx"} for path in files):
+        repo_kind = "C/C++ Library / System Package"
+    else:
+        repo_kind = "Software Library / Package"
+
+    primary_language = next(iter(language_counts), "Unknown")
+    about = description or readme_about or f"{primary_language} repository with {len(files)} discovered files."
+    if readme_about and description and readme_about.lower() not in description.lower():
+        about = f"{description} — {readme_about}" if len(description) < 160 else description
+
+    return {
+        "about": about[:650],
+        "description": description or None,
+        "readme_overview": readme_about or None,
+        "repository_kind": repo_kind,
+        "primary_language": primary_language,
+        "license": license_name or None,
+        "keywords": keywords,
+    }
+
+
+def _extract_existing_features(
+    modules: list[dict[str, Any]],
+    symbols: list[dict[str, Any]],
+    routes: list[dict[str, Any]],
+    database_entities: list[dict[str, Any]],
+    test_files: list[str],
+    readme_sections: list[dict[str, str]],
+) -> list[dict[str, Any]]:
+    features: list[dict[str, Any]] = []
+    symbols_by_file: dict[str, list[dict[str, Any]]] = {}
+    for sym in symbols:
+        fp = sym.get("file_path")
+        if isinstance(fp, str):
+            symbols_by_file.setdefault(fp, []).append(sym)
+
+    for module in modules[:24]:
+        mod_path = str(module.get("path", ""))
+        mod_name = str(module.get("name", mod_path))
+        prefix = f"{mod_path}/"
+        mod_symbols = [
+            sym for fp, syms in symbols_by_file.items()
+            if fp == mod_path or fp.startswith(prefix)
+            for sym in syms
+        ]
+        mod_routes = [r for r in routes if str(r.get("file_path", "")).startswith(prefix)]
+        mod_entities = [e for e in database_entities if str(e.get("file_path", "")).startswith(prefix)]
+        mod_tests = [t for t in test_files if t.startswith(prefix)]
+
+        if mod_routes:
+            category = "API & Endpoints"
+        elif mod_entities:
+            category = "Data & Models"
+        elif mod_tests and not mod_symbols:
+            category = "Testing & Quality"
+        else:
+            category = "Core Module"
+
+        top_symbol_names = list(dict.fromkeys(str(s["name"]) for s in mod_symbols))[:6]
+        parts = [f"Contains {module.get('file_count', 0)} source files"]
+        if top_symbol_names:
+            parts.append(f"defining {', '.join(top_symbol_names)}")
+        if mod_routes:
+            parts.append(f"exposing {len(mod_routes)} API route(s)")
+        if mod_entities:
+            parts.append(f"and {len(mod_entities)} data model(s)")
+        features.append({
+            "name": mod_name,
+            "category": category,
+            "source": "code",
+            "module_path": mod_path,
+            "summary": "; ".join(parts) + ".",
+            "file_count": int(module.get("file_count", 0)),
+            "test_file_count": len(mod_tests),
+            "key_symbols": [
+                {
+                    "name": s["name"],
+                    "kind": s["kind"],
+                    "file_path": s["file_path"],
+                    "start_line": s["start_line"],
+                }
+                for s in mod_symbols[:8]
+            ],
+            "api_routes": mod_routes[:6],
+            "database_entities": mod_entities[:6],
+        })
+
+    generic_headings = {
+        "table of contents", "contents", "installation", "install", "license",
+        "contributing", "acknowledgements", "changelog", "sponsors", "authors",
+    }
+    for section in readme_sections:
+        heading = str(section.get("name", "")).strip()
+        if not heading or heading.lower() in generic_headings:
+            continue
+        features.append({
+            "name": heading,
+            "category": "Documented Capability",
+            "source": str(section.get("source", "README.md")),
+            "module_path": None,
+            "summary": section.get("summary") or f"Documented in {section.get('source', 'README')}.",
+            "file_count": 0,
+            "test_file_count": 0,
+            "key_symbols": [],
+            "api_routes": [],
+            "database_entities": [],
+        })
+    return features[:40]
+
+
+def _extract_niche_details(
+    root: Path,
+    files: list[Path],
+    symbols: list[dict[str, Any]],
+    graph_edges: list[dict[str, Any]],
+    routes: list[dict[str, Any]],
+    database_entities: list[dict[str, Any]],
+    manifests: dict[str, Any],
+) -> dict[str, Any]:
+    public_symbols = [
+        {
+            "name": s["name"],
+            "kind": s["kind"],
+            "file_path": s["file_path"],
+            "start_line": s["start_line"],
+            "end_line": s["end_line"],
+        }
+        for s in symbols
+        if not str(s.get("name", "")).startswith("_")
+    ][:40]
+
+    import_counts: dict[str, int] = {}
+    for edge in graph_edges:
+        if edge.get("type") == "imports":
+            target = str(edge.get("target", "")).removeprefix("module:")
+            if target:
+                import_counts[target] = import_counts.get(target, 0) + 1
+    top_imports = [
+        {"module": mod, "count": cnt}
+        for mod, cnt in sorted(import_counts.items(), key=lambda item: (-item[1], item[0]))[:20]
+    ]
+
+    rel_files = [_relative(p, root) for p in files]
+    config_markers = (
+        "tsconfig.json", "pyproject.toml", "setup.cfg", "CMakeLists.txt",
+        "meson.build", "vitest.config", "jest.config", "Dockerfile",
+        "docker-compose", ".github/workflows/", "tox.ini", "Makefile",
+    )
+    config_files = [
+        rel for rel in rel_files
+        if any(marker.lower() in rel.lower() for marker in config_markers)
+    ][:25]
+
+    patterns: list[str] = []
+    if any(p.suffix.lower() in {".h", ".hpp", ".hh"} for p in files) and any(p.suffix.lower() in {".cpp", ".cc", ".cxx"} for p in files):
+        patterns.append("C/C++ Header & Implementation Split")
+    if (root / "pnpm-workspace.yaml").is_file() or len(manifests.get("package_managers", [])) > 1:
+        patterns.append("Multi-Package / Workspace Layout")
+    if routes:
+        patterns.append("Route / Controller Endpoints")
+    if database_entities:
+        patterns.append("Schema / ORM Entity Modeling")
+    if any(s["kind"] in {"class", "interface", "struct_specifier"} for s in symbols):
+        patterns.append("Object-Oriented / Typed Contracts")
+    if any(".github/workflows/" in rel for rel in rel_files):
+        patterns.append("GitHub Actions CI")
+
+    return {
+        "public_api_surface": public_symbols,
+        "top_imported_modules": top_imports,
+        "config_and_tooling": config_files,
+        "architecture_patterns": patterns,
+    }
+
+
+def _build_code_chunks(
+    root: Path,
+    source_paths: list[Path],
+    symbols: list[dict[str, Any]],
+    modules: list[dict[str, Any]],
+    readme_features: list[dict[str, str]],
+    language_counts: dict[str, int],
+    frameworks: list[str],
+) -> list[dict[str, Any]]:
+    symbols_by_file: dict[str, list[dict[str, Any]]] = {}
+    for symbol in symbols:
+        file_path = symbol.get("file_path")
+        if isinstance(file_path, str):
+            symbols_by_file.setdefault(file_path, []).append(symbol)
+
+    def module_for_file(relative_path: str) -> str | None:
+        matches = [
+            str(module["path"])
+            for module in modules
+            if isinstance(module.get("path"), str)
+            and (relative_path == module["path"] or relative_path.startswith(f"{module['path']}/"))
+        ]
+        if not matches:
+            return None
+        return max(matches, key=len)
+
+    chunks: list[dict[str, Any]] = []
+    # 1. Include README / architecture overview chunk for high-level repo context
+    for readme_name in ("README.md", "readme.md", "README.rst"):
+        readme_path = root / readme_name
+        if readme_path.is_file():
+            try:
+                readme_lines = readme_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                readme_lines = []
+            if readme_lines:
+                excerpt = "\n".join(readme_lines[:140])
+                overview_header = (
+                    f"Languages: {', '.join(language_counts.keys())}\n"
+                    f"Frameworks: {', '.join(frameworks)}\n"
+                    f"Modules: {', '.join(m['path'] for m in modules[:30])}\n"
+                    f"Sections: {', '.join(f['name'] for f in readme_features[:20])}\n\n"
+                )
+                chunks.append({
+                    "file_path": readme_name,
+                    "symbol_name": "README_OVERVIEW",
+                    "chunk_type": "doc",
+                    "language": "Markdown",
+                    "module_name": None,
+                    "start_line": 1,
+                    "end_line": min(len(readme_lines), 140),
+                    "content": (overview_header + excerpt)[:4500],
+                    "metadata": {"source": "readme"},
+                })
+                break
+
+    # 2. Partition source files: production source first, representative tests second
+    non_test_paths = [p for p in source_paths if not _is_test_source(p, root)]
+    test_paths = [p for p in source_paths if _is_test_source(p, root)]
+    ordered_paths = non_test_paths[:200] + test_paths[:50]
+
+    for path in ordered_paths:
+        if len(chunks) >= MAX_EMBEDDED_CHUNKS:
+            break
+        try:
+            if path.stat().st_size > MAX_FILE_BYTES:
+                continue
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        if not lines:
+            continue
+        relative = _relative(path, root)
+        language = SOURCE_EXTENSIONS.get(path.suffix.lower())
+        module_name = module_for_file(relative)
+        is_test = _is_test_source(path, root)
+        file_symbols = sorted(
+            symbols_by_file.get(relative, []),
+            key=lambda sym: (int(sym.get("start_line", 1)), str(sym.get("name", ""))),
+        )
+
+        # Group top-level / major symbols into bounded chunks (<= 100 lines each)
+        covered_until = 0
+        if file_symbols:
+            # Capture file prologue / exports / imports header if meaningful
+            first_start = max(1, int(file_symbols[0].get("start_line", 1)))
+            if first_start > 2:
+                end_prologue = min(first_start - 1, 50)
+                prologue_text = "\n".join(lines[:end_prologue]).strip()
+                if prologue_text:
+                    chunks.append({
+                        "file_path": relative,
+                        "symbol_name": "__prologue__",
+                        "chunk_type": "test" if is_test else "file",
+                        "language": language,
+                        "module_name": module_name,
+                        "start_line": 1,
+                        "end_line": end_prologue,
+                        "content": f"// File: {relative} (lines 1-{end_prologue})\n" + prologue_text[:3500],
+                        "metadata": {"is_test": is_test},
+                    })
+                    covered_until = end_prologue
+
+            for symbol in file_symbols:
+                if len(chunks) >= MAX_EMBEDDED_CHUNKS:
+                    break
+                start = max(1, int(symbol.get("start_line", 1)))
+                end = min(len(lines), int(symbol.get("end_line", start)))
+                if start <= covered_until and end <= covered_until:
+                    continue
+                bounded_end = min(end, start + 99)
+                body = "\n".join(lines[start - 1:bounded_end]).strip()
+                if not body:
+                    continue
+                chunks.append({
+                    "file_path": relative,
+                    "symbol_name": str(symbol.get("name", ""))[:255] or None,
+                    "chunk_type": "test" if is_test else str(symbol.get("kind", "symbol"))[:64],
+                    "language": language,
+                    "module_name": module_name,
+                    "start_line": start,
+                    "end_line": bounded_end,
+                    "content": (
+                        f"// File: {relative} | Symbol: {symbol.get('name')} ({symbol.get('kind')})\n"
+                        + body[:3500]
+                    ),
+                    "metadata": {"is_test": is_test, "exported": bool(symbol.get("exported"))},
+                })
+                covered_until = max(covered_until, bounded_end)
+        else:
+            # Fallback window for files without parsed symbols (headers, barrel exports, configs)
+            end = min(len(lines), 100)
+            body = "\n".join(lines[:end]).strip()
+            if body:
+                chunks.append({
+                    "file_path": relative,
+                    "symbol_name": None,
+                    "chunk_type": "test" if is_test else "file",
+                    "language": language,
+                    "module_name": module_name,
+                    "start_line": 1,
+                    "end_line": end,
+                    "content": f"// File: {relative}\n" + body[:3500],
+                    "metadata": {"is_test": is_test},
+                })
+
+    if chunks:
+        vectors, model_id, dim = embed_texts_sync(chunk["content"] for chunk in chunks)
+        for chunk, vector in zip(chunks, vectors):
+            chunk["embedding"] = vector
+            chunk["embedding_model"] = model_id
+            chunk["embedding_dim"] = dim
+    return chunks
 
 
 def analyze_repository(
@@ -880,6 +1494,7 @@ def analyze_repository(
         }
     ][:100]
     modules = _source_directories(files, root)
+    scope_breakdown: dict[str, int] = {}
     for module in modules:
         prefix = f"{module['path']}/"
         module["api_route_count"] = sum(
@@ -891,10 +1506,39 @@ def analyze_repository(
         module["test_file_count"] = sum(
             test_file.startswith(prefix) for test_file in test_files
         )
-    feature_headings = _readme_features(root, warnings)
+        scope = _classify_module_scope(module["path"])
+        module["scope"] = scope
+        scope_breakdown[scope] = scope_breakdown.get(scope, 0) + 1
+    readme_about, feature_headings = _readme_sections(root, warnings)
+    repository_profile = _extract_repository_profile(
+        root=root,
+        readme_about=readme_about,
+        manifests=manifests,
+        language_counts=language_counts,
+        routes=routes,
+        entry_points=entry_points,
+        files=files,
+    )
+    existing_features = _extract_existing_features(
+        modules=modules,
+        symbols=symbols,
+        routes=routes,
+        database_entities=database_entities,
+        test_files=test_files,
+        readme_sections=feature_headings,
+    )
+    niche_details = _extract_niche_details(
+        root=root,
+        files=files,
+        symbols=symbols,
+        graph_edges=graph_edges,
+        routes=routes,
+        database_entities=database_entities,
+        manifests=manifests,
+    )
     if not feature_headings:
         feature_headings = [
-            {"name": module["name"], "source": module["path"]}
+            {"name": module["name"], "source": module["path"], "summary": ""}
             for module in modules[:30]
         ]
     build_commands = manifests["build_commands"]
@@ -942,12 +1586,17 @@ def analyze_repository(
         "potential_development_areas": [
             "Review test coverage and add tests where source modules lack nearby tests."
         ] if test_files else ["Add or identify test suites for the detected source modules."],
+        "repository_profile": repository_profile,
+        "existing_features": existing_features,
+        "niche_details": niche_details,
+        "scope_breakdown": scope_breakdown,
         "warnings": warnings,
     }
     summary = {
         "repository_id": repository_id,
         "snapshot_id": snapshot_id,
         "commit_sha": commit_sha,
+        "scope_breakdown": scope_breakdown,
         "language": list(language_counts),
         "language_file_counts": language_counts,
         "frameworks": manifests["frameworks"],
@@ -955,6 +1604,9 @@ def analyze_repository(
         "orm": manifests["orm"],
         "modules": modules,
         "features": feature_headings,
+        "repository_profile": repository_profile,
+        "existing_features": existing_features,
+        "niche_details": niche_details,
         "dependencies": manifests["dependencies"],
         "package_managers": manifests["package_managers"],
         "build_commands": build_commands,
@@ -968,4 +1620,13 @@ def analyze_repository(
         "analyzed_source_file_count": analyzed_source_files,
         "imported_modules": sorted(imported_modules)[:500],
     }
-    return {"summary": summary, "report": report, "warnings": warnings}
+    chunks = _build_code_chunks(
+        root=root,
+        source_paths=source_paths,
+        symbols=symbols,
+        modules=modules,
+        readme_features=feature_headings,
+        language_counts=language_counts,
+        frameworks=manifests["frameworks"],
+    )
+    return {"summary": summary, "report": report, "chunks": chunks, "warnings": warnings}

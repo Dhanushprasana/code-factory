@@ -1,10 +1,4 @@
-import {
-  BadRequestException,
-  Injectable,
-  Logger,
-  NotFoundException,
-  ServiceUnavailableException,
-} from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException, BadRequestException } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
@@ -15,12 +9,14 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { RepositoryAnalysisEntity } from './entities/repository-analysis.entity';
 import { RepositoryEntity } from '../repositories/entities/repository.entity';
 import { RepositorySnapshotEntity } from '../repositories/entities/repository-snapshot.entity';
+import { AnalyzedChunkInput, AnalyzedGraphInput, VectorContextService } from './vector-context.service';
 
 interface AnalysisServiceResponse {
   operation_id: string;
   status: string;
   summary: Record<string, unknown>;
   report: Record<string, unknown>;
+  chunks?: AnalyzedChunkInput[];
   warnings: string[];
 }
 
@@ -41,6 +37,8 @@ export class AnalysisService {
     private readonly repositories: Repository<RepositoryEntity>,
     @InjectRepository(RepositorySnapshotEntity)
     private readonly snapshots: Repository<RepositorySnapshotEntity>,
+    @Optional()
+    private readonly vectorContext?: VectorContextService,
   ) {}
 
   async startAnalysis(
@@ -218,6 +216,38 @@ export class AnalysisService {
       analysis.status = 'completed';
       analysis.errorMessage = null;
       await this.analyses.save(analysis);
+      if (this.vectorContext) {
+        try {
+          await this.vectorContext.persistAnalysisContext({
+            repositoryId: repository.id,
+            snapshotId: snapshot.id,
+            commitSha: analysis.commitSha,
+            chunks: result.chunks,
+            graph: result.report.graph as AnalyzedGraphInput | undefined,
+          });
+          const hasOpenRouter = Boolean(this.config.get<string>('OPENROUTER_API_KEY')?.trim());
+          const configuredProvider = this.config.get<string>('ANALYSIS_FEATURE_PROVIDER')?.trim();
+          if (hasOpenRouter || configuredProvider === 'openrouter' || configuredProvider === 'ollama') {
+            try {
+              await this.extractFeaturesWithLlm(analysis.id, {
+                provider: configuredProvider || (hasOpenRouter ? 'openrouter' : 'ollama'),
+              });
+            } catch (featureError) {
+              this.logger.warn(
+                `Could not run automatic LLM feature extraction for analysis ${analysis.id}: ${
+                  featureError instanceof Error ? featureError.message : String(featureError)
+                }`,
+              );
+            }
+          }
+        } catch (vectorError) {
+          this.logger.warn(
+            `Could not persist vector/graph context for snapshot ${snapshot.id}: ${
+              vectorError instanceof Error ? vectorError.message : String(vectorError)
+            }`,
+          );
+        }
+      }
     } catch (error) {
       analysis.status = 'failed';
       analysis.errorMessage = this.errorMessage(error);
@@ -228,6 +258,134 @@ export class AnalysisService {
       );
       throw error;
     }
+  }
+
+  async extractFeaturesWithLlm(
+    analysisId: string,
+    input: { provider?: unknown } | null = {},
+  ) {
+    const analysis = await this.findAnalysis(analysisId);
+    if (analysis.status !== 'completed' || !analysis.summary || !analysis.report) {
+      throw new BadRequestException('Repository analysis must be completed before extracting AI features.');
+    }
+    if (!this.vectorContext) {
+      throw new ServiceUnavailableException('Vector context storage is not available.');
+    }
+    const requestedProvider = input?.provider;
+    let provider: 'openrouter' | 'ollama';
+    if (requestedProvider === 'openrouter' || requestedProvider === 'ollama') {
+      provider = requestedProvider;
+    } else if (requestedProvider !== undefined) {
+      throw new BadRequestException('Provider must be openrouter or ollama.');
+    } else {
+      provider = this.config.get<string>('OPENROUTER_API_KEY')?.trim() ? 'openrouter' : 'ollama';
+    }
+
+    const repository = await this.repositories.findOneBy({ id: analysis.repositoryId });
+    const overviewChunks = await this.vectorContext.retrieveSnapshotOverviewChunks(analysis.snapshotId, 140);
+    const vectorChunks = overviewChunks.length
+      ? overviewChunks
+      : (await this.vectorContext.retrieveSemanticChunks({
+        snapshotIds: [analysis.snapshotId],
+        queryText: 'repository overview core features public API modules commands schemas serialization validation',
+        limit: 80,
+      }))[analysis.snapshotId] ?? [];
+    if (!vectorChunks.length) {
+      throw new BadRequestException(
+        'No vector code chunks are stored for this snapshot yet. Re-run repository analysis first.',
+      );
+    }
+
+    const reportSymbols = Array.isArray(analysis.report.symbols) ? analysis.report.symbols : [];
+    const nonCorePattern = /(^|\/)(bench|benchmarks|typia-case|website|apps\/docs|examples|fixtures)(\/|$)|(\.test\.|\.spec\.|__tests__)/i;
+    const publicApiSymbols = Array.from(new Set(
+      reportSymbols
+        .filter((sym): sym is Record<string, unknown> => (
+          typeof sym === 'object' && sym !== null && typeof sym.file_path === 'string' && !nonCorePattern.test(sym.file_path)
+        ))
+        .sort((a, b) => Number(Boolean(b.exported)) - Number(Boolean(a.exported)))
+        .map((sym) => String(sym.name ?? '').trim())
+        .filter((name) => name.length > 1),
+    )).slice(0, 250);
+    const summaryWithApis = {
+      ...analysis.summary,
+      public_api_symbols: publicApiSymbols,
+    };
+
+    const serviceUrl = this.config.get<string>('AI_SERVICE_URL', 'http://localhost:8000')
+      .replace(/\/+$/, '');
+    const response = await fetch(`${serviceUrl}/api/v1/analysis/features`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        repository_id: analysis.repositoryId,
+        snapshot_id: analysis.snapshotId,
+        commit_sha: analysis.commitSha,
+        repository_name: repository?.fullName ?? analysis.repositoryId,
+        provider,
+        summary: summaryWithApis,
+        vector_chunks: vectorChunks,
+      }),
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new BadRequestException(
+        `AI service returned HTTP ${response.status}${detail ? `: ${detail.slice(0, 400)}` : ''}.`,
+      );
+    }
+    const payload = await response.json() as {
+      repository_overview?: string;
+      features?: Array<Record<string, unknown>>;
+      provider?: string;
+      model?: string;
+    };
+
+    let featureInventory: Array<Record<string, unknown>> = [];
+    try {
+      const invResponse = await fetch(`${serviceUrl}/api/v1/analysis/inventory`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          repository_id: analysis.repositoryId,
+          snapshot_id: analysis.snapshotId,
+          commit_sha: analysis.commitSha,
+          repository_name: repository?.fullName ?? analysis.repositoryId,
+          provider,
+          summary: summaryWithApis,
+          vector_chunks: vectorChunks,
+        }),
+        signal: AbortSignal.timeout(120_000),
+      });
+      if (invResponse.ok) {
+        const invPayload = await invResponse.json() as { inventory?: Array<Record<string, unknown>> };
+        featureInventory = Array.isArray(invPayload.inventory) ? invPayload.inventory : [];
+      }
+    } catch (invError) {
+      this.logger.warn(
+        `Could not extract feature inventory for analysis ${analysisId}: ${
+          invError instanceof Error ? invError.message : String(invError)
+        }`,
+      );
+    }
+
+    const nextSummary = {
+      ...analysis.summary,
+      ai_repository_overview: payload.repository_overview,
+      ai_existing_features: payload.features ?? [],
+      ai_feature_inventory: featureInventory,
+      ai_features_provider: payload.provider ?? provider,
+      ai_features_model: payload.model ?? null,
+    };
+    const nextReport = {
+      ...analysis.report,
+      ai_repository_overview: payload.repository_overview,
+      ai_existing_features: payload.features ?? [],
+      ai_feature_inventory: featureInventory,
+    };
+    analysis.summary = nextSummary;
+    analysis.report = nextReport;
+    return this.analyses.save(analysis);
   }
 
   private async findReadySnapshot(repositoryId: string, commitSha?: string) {
@@ -272,14 +430,21 @@ export class AnalysisService {
   }
 
   private inferEcosystem(checkoutPath: string) {
-    if (fs.existsSync(path.join(checkoutPath, 'package.json'))) {
+    const hasNode = fs.existsSync(path.join(checkoutPath, 'package.json'));
+    const hasPython = fs.existsSync(path.join(checkoutPath, 'pyproject.toml'))
+      || fs.existsSync(path.join(checkoutPath, 'requirements.txt'))
+      || fs.existsSync(path.join(checkoutPath, 'setup.py'));
+    const hasCpp = fs.existsSync(path.join(checkoutPath, 'CMakeLists.txt'))
+      || fs.existsSync(path.join(checkoutPath, 'meson.build'))
+      || fs.existsSync(path.join(checkoutPath, 'Makefile'));
+    if (hasNode && !hasPython && !hasCpp) {
       return 'node-typescript';
     }
-    if (
-      fs.existsSync(path.join(checkoutPath, 'pyproject.toml'))
-      || fs.existsSync(path.join(checkoutPath, 'requirements.txt'))
-    ) {
+    if (hasPython && !hasNode && !hasCpp) {
       return 'python';
+    }
+    if (hasCpp && !hasNode && !hasPython) {
+      return 'cpp';
     }
     return 'mixed';
   }

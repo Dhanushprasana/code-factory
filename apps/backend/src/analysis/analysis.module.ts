@@ -5,6 +5,7 @@ import { RepositoryAnalysisEntity } from './entities/repository-analysis.entity'
 import { AnalysisController } from './analysis.controller';
 import { AnalysisProcessor } from './analysis.processor';
 import { AnalysisService } from './analysis.service';
+import { VectorContextService } from './vector-context.service';
 import { RepositoryEntity } from '../repositories/entities/repository.entity';
 import { RepositorySnapshotEntity } from '../repositories/entities/repository-snapshot.entity';
 
@@ -18,6 +19,7 @@ import { RepositorySnapshotEntity } from '../repositories/entities/repository-sn
     ]),
   ],
   controllers: [AnalysisController],
-  providers: [AnalysisService, AnalysisProcessor],
+  providers: [AnalysisService, AnalysisProcessor, VectorContextService],
+  exports: [VectorContextService],
 })
 export class AnalysisModule {}

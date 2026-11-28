@@ -240,7 +240,7 @@ For a chronological status of the project, current workflow, active showstoppers
 5. In Task Generator, select **OpenRouter** or **Ollama** for each generation. Both use the OpenAI-compatible chat-completions format. OpenRouter sends the bounded context to the configured hosted model and requires `OPENROUTER_API_KEY`; Ollama sends it to the configured Ollama endpoint and does not need a cloud API key. Ollama requests a strict JSON schema constrained to the requested suggestion count, known modules, and retrieved evidence references; the AI service validates the response before saving it.
 6. The backend persists the completed generation, provider/model/prompt version, candidate suggestions, and provenance manifest. In the review UI, edit a suggestion and save it as a task draft. Saved drafts are listed in the Task Library; edits create a new immutable version, and the task detail view shows its evidence and version history.
 
-OpenRouter settings are `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL` (default `https://openrouter.ai/api/v1`), and `OPENROUTER_MODEL` (default `openai/gpt-4o-mini`). The key is passed to the AI-service container and is not stored in PostgreSQL. Ollama settings are `OLLAMA_BASE_URL` (default `http://host.docker.internal:11434/v1`), `OLLAMA_MODEL` (default `qwen2.5:7b`), and `OLLAMA_CONTEXT_LENGTH` (default `16384`). `TASK_CONTEXT_TOKEN_BUDGET` and `TASK_OUTPUT_TOKEN_BUDGET` apply to either provider. Missing or invalid provider configuration returns a clear error rather than fabricated suggestions.
+OpenRouter settings are `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL` (default `https://openrouter.ai/api/v1`), and `OPENROUTER_MODEL` (default `baidu/ernie-5.5-flash-preview:free`). The key is passed to the AI-service container and is not stored in PostgreSQL. Ollama settings are `OLLAMA_BASE_URL` (default `http://host.docker.internal:11434/v1`), `OLLAMA_MODEL` (default `qwen2.5:7b`), and `OLLAMA_CONTEXT_LENGTH` (default `16384`). `TASK_CONTEXT_TOKEN_BUDGET` and `TASK_OUTPUT_TOKEN_BUDGET` apply to either provider. Missing or invalid provider configuration returns a clear error rather than fabricated suggestions.
 
 OpenRouter is a hosted service: selected repository source excerpts and task context are sent to the configured OpenRouter model. Ollama can keep those excerpts on a local model endpoint; ensure the configured endpoint is actually local if that is a data-handling requirement. The provider can be selected independently for each generation, and the selected provider/model are retained in generation history.
 
@@ -377,7 +377,7 @@ Backend configuration is read from `apps/backend/.env` (copy `.env.example` firs
 | `AI_SERVICE_URL` | Internal URL of the Python analysis and task-context service |
 | `OPENROUTER_API_KEY` | OpenRouter API key; passed to the AI-service container |
 | `OPENROUTER_BASE_URL` | OpenRouter API base URL (default `https://openrouter.ai/api/v1`) |
-| `OPENROUTER_MODEL` | OpenRouter model slug (default `openai/gpt-4o-mini`) |
+| `OPENROUTER_MODEL` | OpenRouter model slug (default `baidu/ernie-5.5-flash-preview:free`) |
 | `OLLAMA_BASE_URL` | Ollama OpenAI-compatible base URL (default `http://host.docker.internal:11434/v1`; use `http://ollama:11434/v1` for the Compose profile) |
 | `OLLAMA_MODEL` | Ollama model tag (default `qwen2.5:7b`) |
 | `OLLAMA_CONTEXT_LENGTH` | Context window configured on the optional Ollama container (default `16384`) |

@@ -32,4 +32,12 @@ export class AnalysisController {
   getGraph(@Param('id') analysisId: string) {
     return this.analysisService.getGraph(analysisId);
   }
+
+  @Post('analyses/:id/features')
+  extractFeatures(
+    @Param('id') analysisId: string,
+    @Body() body: { provider?: unknown } | null = {},
+  ) {
+    return this.analysisService.extractFeaturesWithLlm(analysisId, body);
+  }
 }

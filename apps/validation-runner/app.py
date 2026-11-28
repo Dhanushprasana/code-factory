@@ -35,8 +35,9 @@ AGENT_EXECUTABLES = {
 HARBOR_AGENTS = {"gemini-cli", "antigravity-cli", "claude-code", "codex"}
 HARBOR_MODEL_PATTERN = re.compile(r"^[A-Za-z0-9._:/_+-]{1,256}$")
 ALLOWED_EXECUTABLES = {
-    "npm", "pnpm", "yarn", "node", "python", "python3", "pip", "pytest",
-    "go", "cargo", "rustc", "mvn", "gradle", "make", "git",
+    "npm", "pnpm", "yarn", "node", "npx", "python", "python3", "pip", "pytest",
+    "uv", "go", "cargo", "rustc", "mvn", "gradle", "make", "cmake", "ctest",
+    "ninja", "meson", "g++", "gcc", "clang", "clang++", "pkg-config", "git",
 }
 MAX_COMMANDS_PER_PHASE = 20
 MAX_ARGUMENT_LENGTH = 512
@@ -299,25 +300,41 @@ def _create_harbor_task(
     )
 
     repository_ids = " ".join(request.repository_ids)
+    git_safe = "git -c safe.directory='*' -c core.whitespace=-trailing-space,-space-before-tab,-indent-with-non-tab,-cr-at-eol"
     collect_lines = [
         "set -eu",
-        "PATH=/usr/bin:/bin",
+        "PATH=/usr/local/bin:/usr/bin:/bin",
         "export PATH",
         "mkdir -p /logs/artifacts/repositories",
         "patch_valid=1",
         f"for repository_id in {repository_ids}; do",
         '  repository="/workspace/repositories/$repository_id"',
-        '  git -C "$repository" add -A',
+        '  if [ ! -d "$repository" ]; then continue; fi',
+        f'  {git_safe} -C "$repository" add -A',
+        f'  {git_safe} -C "$repository" reset -q -- TASK.md 2>/dev/null || true',
         '  patch_path="/logs/artifacts/repositories/$repository_id.patch"',
-        '  git -C "$repository" diff --cached --binary > "$patch_path"',
-        '  if ! git -C "$repository" diff --cached --check; then patch_valid=0; fi',
+        f'  {git_safe} -C "$repository" diff --cached --binary -- . ":(exclude)TASK.md" > "$patch_path"',
+        f'  if ! {git_safe} -C "$repository" diff --cached --check -- . ":(exclude)TASK.md"; then patch_valid=0; fi',
         "done",
         "printf '%s\\\\n' \"$patch_valid\" > /logs/artifacts/patch-valid.txt",
     ]
     verifier_lines = [
         "#!/bin/sh",
         "set -eu",
-        "mkdir -p /logs/verifier",
+        "mkdir -p /logs/verifier /logs/artifacts/repositories",
+        "if [ ! -f /logs/artifacts/patch-valid.txt ]; then",
+        "  patch_valid=1",
+        f"  for repository_id in {repository_ids}; do",
+        '    repository="/workspace/repositories/$repository_id"',
+        '    if [ ! -d "$repository" ]; then continue; fi',
+        f'    {git_safe} -C "$repository" add -A',
+        f'    {git_safe} -C "$repository" reset -q -- TASK.md 2>/dev/null || true',
+        '    patch_path="/logs/artifacts/repositories/$repository_id.patch"',
+        f'    {git_safe} -C "$repository" diff --cached --binary -- . ":(exclude)TASK.md" > "$patch_path"',
+        f'    if ! {git_safe} -C "$repository" diff --cached --check -- . ":(exclude)TASK.md"; then patch_valid=0; fi',
+        "  done",
+        '  printf \'%s\\n\' "$patch_valid" > /logs/artifacts/patch-valid.txt',
+        "fi",
         "has_patch=0",
         "patch_valid=0",
         f"for repository_id in {repository_ids}; do",
@@ -780,7 +797,7 @@ def _run_agent(client, request: AgentExecutionRequest) -> dict:
             repository_workdir = f"/workspace/repositories/{repository_id}"
             git_exit, _, _, _, _ = _exec_in_container(
                 container,
-                ["git", "add", "-A"],
+                ["git", "-c", "safe.directory=*", "add", "-A"],
                 child_environment,
                 MAX_LOG_BYTES,
                 workdir=repository_workdir,
@@ -789,7 +806,7 @@ def _run_agent(client, request: AgentExecutionRequest) -> dict:
                 raise HTTPException(status_code=500, detail="Could not stage agent workspace changes.")
             patch_exit, patch_output, _, _, _ = _exec_in_container(
                 container,
-                ["git", "diff", "--cached", "--binary", "--"],
+                ["git", "-c", "safe.directory=*", "diff", "--cached", "--binary", "--", ".", ":(exclude)TASK.md"],
                 child_environment,
                 MAX_PATCH_BYTES,
                 workdir=repository_workdir,
@@ -801,7 +818,12 @@ def _run_agent(client, request: AgentExecutionRequest) -> dict:
                 raise HTTPException(status_code=413, detail="The collected agent patch exceeded the configured limit.")
             check_exit, _, _, _, _ = _exec_in_container(
                 container,
-                ["git", "diff", "--cached", "--check"],
+                [
+                    "git",
+                    "-c", "safe.directory=*",
+                    "-c", "core.whitespace=-trailing-space,-space-before-tab,-indent-with-non-tab,-cr-at-eol",
+                    "diff", "--cached", "--check", "--", ".", ":(exclude)TASK.md",
+                ],
                 child_environment,
                 MAX_LOG_BYTES,
                 workdir=repository_workdir,

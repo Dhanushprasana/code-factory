@@ -870,3 +870,156 @@ async def test_chat_completions_request_uses_provider_endpoint_and_auth(
     assert captured["headers"].get("authorization") == (
         f"Bearer {api_key}" if api_key else None
     )
+
+
+def test_embeddings_endpoint_returns_deterministic_vectors():
+    client = TestClient(app)
+    response = client.post(
+        "/api/v1/embeddings",
+        json={"texts": ["parse json value", "validate schema"]},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["dimensions"] == 384
+    assert len(payload["embeddings"]) == 2
+    assert len(payload["embeddings"][0]) == 384
+
+
+def test_analysis_extracts_cpp_cmake_project_and_chunks(tmp_path):
+    (tmp_path / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.16)\nproject(sample_cpp)\nenable_testing()\n",
+        encoding="utf-8",
+    )
+    include_dir = tmp_path / "include" / "sample"
+    include_dir.mkdir(parents=True)
+    (include_dir / "value.h").write_text(
+        "namespace sample {\nclass Value {\npublic:\n  int asInt() const;\n};\n}\n",
+        encoding="utf-8",
+    )
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "value.cpp").write_text(
+        '#include "sample/value.h"\nnamespace sample {\nint Value::asInt() const {\n  return 42;\n}\n}\n',
+        encoding="utf-8",
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/v1/analyze",
+        json={
+            "repository_id": "repo-cpp-1",
+            "snapshot_id": "snap-cpp-1",
+            "commit_sha": "0123456789abcdef0123456789abcdef01234567",
+            "repository_path": str(tmp_path),
+            "ecosystem": "cpp",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["language"] == ["C++", "C/C++ Header"] or "C++" in payload["summary"]["language"]
+    assert len(payload["chunks"]) >= 2
+    assert all(len(chunk["embedding"]) == 384 for chunk in payload["chunks"])
+    assert payload["summary"]["repository_profile"]["repository_kind"]
+    assert isinstance(payload["summary"]["existing_features"], list)
+    assert payload["summary"]["niche_details"]["public_api_surface"]
+
+
+@pytest.mark.asyncio
+async def test_openrouter_falls_back_to_json_object_on_400(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        def __init__(self, status_code, body):
+            self.status_code = status_code
+            self.is_success = 200 <= status_code < 300
+            self._body = body
+
+        def json(self):
+            return self._body
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, headers, json):
+            calls.append(json)
+            if len(calls) == 1:
+                return FakeResponse(400, {"error": {"message": "strict schema unsupported"}})
+            return FakeResponse(200, {"choices": [{"message": {"content": '{"tasks": []}'}}]})
+
+    monkeypatch.setattr(task_factory.httpx, "AsyncClient", FakeAsyncClient)
+
+    result = await task_factory._request_chat_completions(
+        "openrouter",
+        "https://openrouter.test/api/v1",
+        "test-model",
+        "Return JSON.",
+        500,
+        "test-key",
+        {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+    )
+
+    assert result == '{"tasks": []}'
+    assert len(calls) == 2
+    assert calls[0]["response_format"]["type"] == "json_schema"
+    assert calls[1]["response_format"] == {"type": "json_object"}
+    assert "provider" not in calls[1]
+
+
+def test_analysis_features_endpoint_uses_vector_chunks(monkeypatch):
+    from app import feature_extractor
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+
+    async def fake_chat(provider, base_url, model, prompt, max_tokens, api_key, response_schema):
+        assert provider == "openrouter"
+        assert "Vector-retrieved code chunks" in prompt
+        assert "parse_value" in prompt
+        return json.dumps({
+            "repository_overview": "A lightweight parser library for structured configuration values.",
+            "features": [
+                {
+                    "name": "Value Parsing",
+                    "category": "Validation & Parsing",
+                    "description": "Parses raw text inputs into typed Value objects with line-accurate error reporting.",
+                    "evidence_files": ["src/parser.py"],
+                    "key_symbols": ["parse_value"],
+                }
+            ],
+        })
+
+    monkeypatch.setattr(feature_extractor, "_request_chat_completions", fake_chat)
+
+    response = client.post(
+        "/api/v1/analysis/features",
+        json={
+            "repository_id": "repo-1",
+            "snapshot_id": "snap-1",
+            "commit_sha": "abc123",
+            "repository_name": "org/sample",
+            "provider": "openrouter",
+            "summary": {"language": ["Python"], "modules": [{"name": "src", "path": "src", "file_count": 1}]},
+            "vector_chunks": [
+                {
+                    "file_path": "src/parser.py",
+                    "symbol": "parse_value",
+                    "chunk_kind": "symbol",
+                    "module_path": "src",
+                    "content": "def parse_value(raw: str) -> dict:\n    return {'raw': raw}\n",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert payload["features"][0]["name"] == "Value Parsing"
+    assert "Parses raw text inputs" in payload["features"][0]["description"]
+

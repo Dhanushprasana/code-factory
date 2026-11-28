@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -12,6 +13,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import * as fs from 'fs';
 import * as path from 'path';
 import { In, Repository } from 'typeorm';
+import { VectorContextService } from '../analysis/vector-context.service';
 import { ProjectEntity } from '../projects/entities/project.entity';
 import { ProjectRepositoryEntity } from '../repositories/entities/project-repository.entity';
 import { RepositoryAnalysisEntity } from '../analysis/entities/repository-analysis.entity';
@@ -28,6 +30,12 @@ const TASK_CATEGORIES = [
   'database_change',
   'performance',
   'test_improvement',
+  'new_feature',
+  'feature_enhancement',
+  'benchmarking',
+  'testing',
+  'documentation',
+  'ui_enhancement',
 ] as const;
 const TASK_DIFFICULTIES = ['easy', 'medium', 'hard'] as const;
 
@@ -39,6 +47,9 @@ interface SuggestTasksInput {
   difficulty?: unknown;
   constraints?: unknown;
   count?: unknown;
+  scopeFilter?: unknown;
+  taskCategories?: unknown;
+  verifyTasks?: unknown;
 }
 
 interface SaveTaskInput {
@@ -61,6 +72,7 @@ interface TaskSuggestionResponse {
   model: string;
   prompt_version: string;
   tasks: Record<string, unknown>[];
+  rejected_tasks?: Record<string, unknown>[];
   context_manifest: Record<string, unknown>;
 }
 
@@ -89,6 +101,8 @@ export class TasksService {
     private readonly generations: Repository<TaskGenerationEntity>,
     @InjectRepository(TaskVersionEntity)
     private readonly versions: Repository<TaskVersionEntity>,
+    @Optional()
+    private readonly vectorContext?: VectorContextService,
   ) {}
 
   async getProjectContext(projectId: string) {
@@ -165,6 +179,25 @@ export class TasksService {
     await this.requireProject(projectId);
     const validated = this.validateSuggestionInput(input);
     const repositories = await this.resolveRepositories(projectId, validated.analysisIds);
+    const queryText = [
+      validated.userIdea,
+      validated.category,
+      validated.difficulty,
+      ...validated.constraints,
+    ]
+      .filter(Boolean)
+      .join(' ');
+    if (this.vectorContext && queryText.trim()) {
+      const semanticBySnapshot = await this.vectorContext.retrieveSemanticChunks({
+        snapshotIds: repositories.map((repo) => String(repo.snapshot_id)),
+        queryText,
+        limit: 40,
+      });
+      for (const repository of repositories) {
+        const snapshotId = String(repository.snapshot_id);
+        repository.vector_chunks = semanticBySnapshot[snapshotId] ?? [];
+      }
+    }
     const generation = await this.generations.save(this.generations.create({
       projectId,
       status: 'running',
@@ -176,6 +209,9 @@ export class TasksService {
         difficulty: validated.difficulty,
         constraints: validated.constraints,
         count: validated.count,
+        scopeFilter: validated.scopeFilter,
+        taskCategories: validated.taskCategories,
+        verifyTasks: validated.verifyTasks,
       },
     }));
 
@@ -194,6 +230,9 @@ export class TasksService {
           difficulty: validated.difficulty,
           constraints: validated.constraints,
           count: validated.count,
+          scope_filter: validated.scopeFilter,
+          task_categories: validated.taskCategories,
+          verify_tasks: validated.verifyTasks,
           repositories,
         }),
         signal: AbortSignal.timeout(310_000),
@@ -229,7 +268,11 @@ export class TasksService {
       generation.contextManifest = result.context_manifest;
       generation.candidates = result.tasks;
       await this.generations.save(generation);
-      return { ...generation, candidates: result.tasks };
+      return {
+        ...generation,
+        candidates: result.tasks,
+        rejected_tasks: result.rejected_tasks ?? [],
+      };
     } catch (error) {
       if (generation.status === 'running') {
         generation.status = 'failed';
@@ -423,6 +466,12 @@ export class TasksService {
         input.constraints.some((item) => typeof item !== 'string' || item.length > 500))) {
       throw new BadRequestException('Constraints must be up to 10 strings, each at most 500 characters.');
     }
+    const scopeFilter = input.scopeFilter === 'all' ? 'all' : 'core_library';
+    const taskCategories = Array.isArray(input.taskCategories)
+      ? input.taskCategories
+        .filter((item): item is string => typeof item === 'string' && TASK_CATEGORIES.includes(item as typeof TASK_CATEGORIES[number]))
+      : [];
+    const verifyTasks = input.verifyTasks !== false;
     return {
       provider,
       analysisIds,
@@ -431,6 +480,9 @@ export class TasksService {
       difficulty,
       constraints: (input.constraints as string[] | undefined)?.map((item) => item.trim()).filter(Boolean) ?? [],
       count: Number(count),
+      scopeFilter,
+      taskCategories,
+      verifyTasks,
     };
   }
 

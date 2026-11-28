@@ -2,8 +2,14 @@ FROM node:22-bookworm-slim
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
+      build-essential \
+      ca-certificates \
+      cmake \
       coreutils \
       git \
+      meson \
+      ninja-build \
+      pkg-config \
       python3 \
       python3-pip \
       python3-pytest \
@@ -16,6 +22,7 @@ RUN apt-get update \
       make \
     && rm -rf /var/lib/apt/lists/*
 
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 COPY apps/validation-runner/requirements.txt /tmp/runner-requirements.txt
 RUN corepack enable \
     && corepack prepare pnpm@9.15.0 --activate \

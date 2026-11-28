@@ -15,11 +15,12 @@ from app.task_factory import (
     _env_setting,
     _extract_json,
     _request_chat_completions,
+    _sanitize_strict_schema,
 )
 
 TaskProvider = Literal["openrouter", "ollama"]
-PATCH_REPAIR_SOURCE_FILE_LIMIT = 12000
-PATCH_REPAIR_SOURCE_TOTAL_LIMIT = 30000
+PATCH_REPAIR_SOURCE_FILE_LIMIT = 64000
+PATCH_REPAIR_SOURCE_TOTAL_LIMIT = 150000
 
 
 class ReferenceTaskInput(BaseModel):
@@ -234,7 +235,7 @@ def _patch_repair_paths(repair: PatchRepairContext) -> list[str]:
 
 
 def _patch_repair_response_schema(allowed_paths: set[str]) -> dict[str, Any]:
-    return {
+    return _sanitize_strict_schema({
         "type": "object",
         "additionalProperties": False,
         "required": ["files"],
@@ -255,7 +256,7 @@ def _patch_repair_response_schema(allowed_paths: set[str]) -> dict[str, Any]:
                 },
             },
         },
-    }
+    })
 
 
 def _validate_patch_repair_output(value: Any, allowed_paths: set[str]) -> PatchRepairOutput:
@@ -369,7 +370,7 @@ def _reference_response_schema(allowed_repository_ids: set[str]) -> dict[str, An
         "type": "string",
         "enum": sorted(allowed_repository_ids),
     }
-    return {
+    return _sanitize_strict_schema({
         "type": "object",
         "additionalProperties": False,
         "required": ["implementation_plan", "patches", "tests"],
@@ -428,7 +429,7 @@ def _reference_response_schema(allowed_repository_ids: set[str]) -> dict[str, An
                 },
             },
         },
-    }
+    })
 
 
 def _validate_reference_output(
@@ -494,20 +495,30 @@ async def generate_reference_solution(request: ReferenceGenerationRequest) -> di
                 ),
             )
         base_url = _env_setting("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-        model = _env_setting("OPENROUTER_MODEL", "openai/gpt-4o-mini")
+        model = _env_setting("OPENROUTER_MODEL", "baidu/ernie-5.5-flash-preview:free")
     else:
         api_key = None
         base_url = _env_setting("OLLAMA_BASE_URL", "http://host.docker.internal:11434/v1")
         model = _env_setting("OLLAMA_MODEL", "qwen2.5:7b")
 
-    token_budget = int(_env_setting("TASK_CONTEXT_TOKEN_BUDGET", "10000"))
-    output_token_budget = int(_env_setting("REFERENCE_OUTPUT_TOKEN_BUDGET", "8000"))
+    token_budget = max(
+        int(_env_setting("TASK_CONTEXT_TOKEN_BUDGET", "10000")),
+        int(_env_setting("REFERENCE_CONTEXT_TOKEN_BUDGET", "18000")),
+    )
+    output_token_budget = int(_env_setting("REFERENCE_OUTPUT_TOKEN_BUDGET", "12000"))
     context, manifest = build_task_context(
         [repository.model_dump() for repository in request.repositories],
-        request.task.title + " " + request.task.description,
+        " ".join([
+            request.task.title,
+            request.task.description,
+            *request.task.requirements,
+            *request.task.acceptance_criteria,
+            *request.task.affected_modules,
+        ]),
         request.task.category,
         request.task.constraints,
         token_budget,
+        max_files=18,
     )
     if not any(repository["chunks"] for repository in context["repositories"]):
         raise HTTPException(
@@ -560,29 +571,37 @@ async def generate_reference_solution(request: ReferenceGenerationRequest) -> di
         )
         response_schema = _patch_repair_response_schema(allowed_paths)
     else:
+        patch_instructions = (
+            "Return only a JSON object with implementation_plan, patches, and tests. "
+            "The implementation plan must be file-by-file. Each plan item and test file must include "
+            "the exact repository_id from the supplied context. "
+            "Each patches item must include one repository_id and a complete unified Git diff; "
+            "do not output only @@ hunk lines without their file headers. "
+            "Include no more than one patch bundle per repository. "
+            f"Every repository_id must be selected from {json.dumps(sorted(allowed_repository_ids))}. "
+            "\n\nSTRICT UNIFIED DIFF FORMAT RULES:\n"
+            "1. Every `diff --git` header must begin in column 1 with no leading spaces (`diff --git a/<path> b/<path>`), "
+            "followed by `--- a/<path>`, `+++ b/<path>`, and one or more @@ hunks.\n"
+            "2. Every @@ header must follow the format `@@ -<start>,<count> +<start>,<count> @@` and "
+            "the counts must EXACTLY match the lines in each hunk. Hunk ranges must use pinned-file line numbers and be ordered and non-overlapping.\n"
+            "3. Every hunk body line must start with exactly one character: ' ' (context), '+' (add), or '-' (remove); "
+            "even a blank context line must contain its leading space.\n"
+            "4. Use line numbers from the PINNED file content shown in the context. "
+            "Do not guess or invent line numbers.\n"
+            "5. Provide at least 2 lines of context around each change to help `git apply` locate the hunk.\n"
+            "6. Do not output standalone hunks, markdown fences, or Do not include placeholder changes such as `-old line`, `+new line`, `TODO`, or `...`.\n"
+            "\nTEST FILES:\n"
+            "Include public test files as new, dedicated paths that match the repo's test runner conventions "
+            "(e.g., `tests/test_<feature>.py` for pytest, `<feature>.test.ts` for vitest/jest, "
+            "`test/<feature>_test.cpp` for CMake/CTest). "
+            "Do NOT overwrite existing test files. Test paths must be relative and within the repository. "
+            "Test assertions must check observable, deterministic outcomes.\n"
+        )
         prompt = (
             common_prompt
-            + "Return only a JSON object with implementation_plan, patches, and tests. The implementation "
-        "plan must be file-by-file. Each plan item and test file must include the exact repository_id "
-        "from the supplied context. Each patches item must include one repository_id and a complete "
-        "unified Git diff, not only @@ hunk lines. Include no more than one patch bundle per repository. "
-        f"Every repository_id must be selected from {json.dumps(sorted(allowed_repository_ids))}. "
-        "Each file needs its own diff --git, --- and +++ headers, and hunk counts must exactly match "
-        "the lines in each hunk. Hunk ranges must use pinned-file line numbers and be ordered and non-overlapping. "
-        "Every hunk body line must use a leading space for context, + for additions, or - for deletions; "
-        "even a blank context line must contain its leading space. Do not output standalone hunks or markdown fences. "
-        "Every diff --git header must begin in column 1 with no leading whitespace; never make a file header "
-        "part of the preceding hunk. Every changed file must start with a "
-        "`diff --git a/<path> b/<path>` line, followed by `--- a/<path>`, `+++ b/<path>`, and @@ hunks. "
-        "Use actual paths and hunk content from the pinned repository. Copy existing import paths exactly; "
-        "do not infer, normalize, or duplicate imports already present in the file prologue. "
-        "Do not include placeholder changes such as "
-        "`-old line`, `+new line`, `TODO`, or `...`. Include public feature, regression, or acceptance "
-        "test files as text, but do not include hidden tests. Every test file path and changed path must "
-        "be relative and must not traverse outside the repository. Keep the patch focused on the task, "
-        "preserve unrelated behavior, and ensure the test assertions check observable outcomes. "
-        + task_prompt
-        + f"Pinned repository context: {json.dumps(context, ensure_ascii=False)}"
+            + patch_instructions
+            + task_prompt
+            + f"Pinned repository context: {json.dumps(context, ensure_ascii=False)}"
         )
         response_schema = _reference_response_schema(allowed_repository_ids)
     response_text = await _request_chat_completions(

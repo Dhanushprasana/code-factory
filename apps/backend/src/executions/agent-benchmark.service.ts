@@ -396,9 +396,13 @@ export class AgentBenchmarkService {
 
       const repositoryPlans: Array<Record<string, unknown>> = [];
       const hiddenSuite = this.readHiddenSuite(evaluation.reference.validation);
+      const publicTests = Array.isArray(evaluation.reference.tests)
+        ? (evaluation.reference.tests as Array<Record<string, unknown>>)
+        : [];
       let patchApplied = false;
       const patchBundles = (submission.metadata.patchBundles ?? {}) as Record<string, string>;
       const appliedRepositories: string[] = [];
+      const patchApplyErrors: Record<string, string> = {};
       const patchRepositories = Object.keys(patchBundles);
       for (const item of baseline) {
         const repositoryId = item.repository_id as string;
@@ -411,23 +415,31 @@ export class AgentBenchmarkService {
           filter: (source) => this.shouldCopySnapshotEntry(source),
         });
         if (repositoryPatch) {
-          const patchPath = path.join(workspaceRoot, '.evaluation.patch');
+          const patchPath = path.join(workspaceRoot, `.evaluation-${repositoryId}.patch`);
           await fs.promises.mkdir(path.dirname(patchPath), { recursive: true });
           await fs.promises.writeFile(patchPath, repositoryPatch, { flag: 'w' });
-          try {
-            await execFileAsync('git', ['apply', '--recount', '--check', '--', patchPath], {
-              cwd: repositoryPath,
-              timeout: 30_000,
-              maxBuffer: 1024 * 1024,
-            });
-            await execFileAsync('git', ['apply', '--recount', '--whitespace=nowarn', '--', patchPath], {
-              cwd: repositoryPath,
-              timeout: 30_000,
-              maxBuffer: 1024 * 1024,
-            });
+          const applyError = await this.tryApplyEvaluationPatch(repositoryPath, patchPath);
+          if (applyError === null) {
             appliedRepositories.push(repositoryId);
-          } catch (error) {
-            // Leave this repository out of the applied set; patch validity is computed after the loop.
+          } else {
+            patchApplyErrors[repositoryId] = applyError;
+          }
+        }
+
+        // Write approved reference's generated public test files into evaluation workspace (without overwriting agent code)
+        for (const publicTest of publicTests) {
+          if (publicTest.repository_id !== repositoryId) continue;
+          const filePath = publicTest.file_path;
+          const content = publicTest.content;
+          if (typeof filePath !== 'string' || typeof content !== 'string' || !this.isSafeRelativePath(filePath)) {
+            continue;
+          }
+          const testDestination = path.resolve(repositoryPath, filePath);
+          const relTest = path.relative(repositoryPath, testDestination);
+          if (!relTest || relTest.startsWith('..') || path.isAbsolute(relTest)) continue;
+          if (!fs.existsSync(testDestination)) {
+            await fs.promises.mkdir(path.dirname(testDestination), { recursive: true });
+            await fs.promises.writeFile(testDestination, content, { flag: 'wx' });
           }
         }
 
@@ -531,6 +543,7 @@ export class AgentBenchmarkService {
       const metrics = {
         patchValidity: patchScore,
         patchValidityRaw: patchApplied && submission.patchValid,
+        ...(Object.keys(patchApplyErrors).length > 0 ? { patchApplyErrors } : {}),
         buildTypeCheck: buildScore,
         buildTypeCheckRaw: buildPassed,
         publicRegressionTests: publicScore,
@@ -715,10 +728,73 @@ export class AgentBenchmarkService {
     }
   }
 
+  private async tryApplyEvaluationPatch(repositoryPath: string, patchPath: string): Promise<string | null> {
+    const attemptModes: string[][] = [
+      ['apply', '--recount', '--allow-binary-replacement', '--whitespace=nowarn'],
+      ['apply', '--recount', '--allow-binary-replacement', '--ignore-space-change', '--whitespace=nowarn'],
+      ['apply', '--recount', '--allow-binary-replacement', '--3way', '--whitespace=nowarn'],
+    ];
+    let lastError = 'git apply failed.';
+    for (const mode of attemptModes) {
+      try {
+        await execFileAsync('git', [...mode, '--check', '--', patchPath], {
+          cwd: repositoryPath,
+          timeout: 30_000,
+          maxBuffer: 4 * 1024 * 1024,
+          windowsHide: true,
+        });
+        await execFileAsync('git', [...mode, '--', patchPath], {
+          cwd: repositoryPath,
+          timeout: 30_000,
+          maxBuffer: 4 * 1024 * 1024,
+          windowsHide: true,
+        });
+        return null;
+      } catch (error) {
+        const stderr = error && typeof error === 'object' && 'stderr' in error && typeof error.stderr === 'string'
+          ? error.stderr.trim()
+          : '';
+        lastError = stderr || (error instanceof Error ? error.message : 'git apply failed.');
+      }
+    }
+    this.logger.warn(`Evaluation patch apply failed in ${repositoryPath}: ${lastError.slice(0, 500)}`);
+    return lastError.slice(0, 1500);
+  }
+
   private async initializeSubmissionRepository(repositoryPath: string) {
     await execFileAsync('git', ['init', '-q'], { cwd: repositoryPath, timeout: 30_000 });
     await execFileAsync('git', ['config', 'user.email', 'forgebench@local'], { cwd: repositoryPath });
     await execFileAsync('git', ['config', 'user.name', 'ForgeBench Agent'], { cwd: repositoryPath });
+    const excludePath = path.join(repositoryPath, '.git', 'info', 'exclude');
+    await fs.promises.mkdir(path.dirname(excludePath), { recursive: true });
+    await fs.promises.writeFile(
+      excludePath,
+      [
+        'TASK.md',
+        'node_modules/',
+        '.venv/',
+        'venv/',
+        '__pycache__/',
+        '.pytest_cache/',
+        '*.pyc',
+        '*.pyo',
+        '*.o',
+        '*.obj',
+        '*.a',
+        '*.so',
+        '*.dylib',
+        '*.dll',
+        'dist/',
+        'build/',
+        'cmake-build-*/',
+        'CMakeCache.txt',
+        'CMakeFiles/',
+        '.next/',
+        '.turbo/',
+        'coverage/',
+      ].join('\n') + '\n',
+      'utf8',
+    );
     await execFileAsync('git', ['add', '-A'], { cwd: repositoryPath });
     await execFileAsync('git', ['-c', 'commit.gpgsign=false', 'commit', '-qm', 'Pinned baseline'], {
       cwd: repositoryPath,

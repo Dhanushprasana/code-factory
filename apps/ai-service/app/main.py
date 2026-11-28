@@ -8,6 +8,14 @@ from app.analyzers.repository_analyzer import (
     ANALYZER_VERSION,
     analyze_repository as scan_repository,
 )
+from app.embeddings import embed_texts
+from app.feature_extractor import (
+    FeatureExtractionRequest,
+    extract_feature_inventory,
+    extract_features_from_chunks,
+)
+from app.gap_analyzer import GapAnalysisRequest, analyze_gaps
+from app.task_verifier import TaskVerificationRequest, verify_task_candidate
 from app.task_factory import (
     TaskGenerationRequest,
     TaskGenerationResponse,
@@ -40,8 +48,19 @@ class AnalysisResponse(BaseModel):
     status: str
     summary: dict
     report: dict = Field(default_factory=dict)
+    chunks: list[dict] = Field(default_factory=list)
     artifact_refs: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+
+class EmbeddingRequest(BaseModel):
+    texts: list[str] = Field(min_length=1, max_length=64)
+
+
+class EmbeddingResponse(BaseModel):
+    model: str
+    dimensions: int
+    embeddings: list[list[float]]
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -81,9 +100,16 @@ def analyze_repository(request: AnalysisRequest) -> AnalysisResponse:
         status="completed",
         summary=result["summary"],
         report={"analyzer_version": ANALYZER_VERSION, **result["report"]},
+        chunks=result.get("chunks", []),
         artifact_refs=[],
         warnings=result["warnings"],
     )
+
+
+@app.post("/api/v1/embeddings", response_model=EmbeddingResponse)
+async def create_embeddings(request: EmbeddingRequest) -> EmbeddingResponse:
+    vectors, model, dim = await embed_texts(request.texts)
+    return EmbeddingResponse(model=model, dimensions=dim, embeddings=vectors)
 
 
 @app.post("/api/v1/tasks/suggest")
@@ -142,3 +168,23 @@ async def generate_reference(request: ReferenceGenerationRequest) -> dict:
                     detail="A reference repository path is outside the configured scan root.",
                 ) from error
     return await generate_reference_solution(request)
+
+
+@app.post("/api/v1/analysis/features")
+async def extract_analysis_features(request: FeatureExtractionRequest) -> dict:
+    return await extract_features_from_chunks(request)
+
+
+@app.post("/api/v1/analysis/inventory")
+async def extract_analysis_inventory(request: FeatureExtractionRequest) -> dict:
+    return await extract_feature_inventory(request)
+
+
+@app.post("/api/v1/tasks/gaps")
+async def analyze_task_gaps(request: GapAnalysisRequest) -> dict:
+    return await analyze_gaps(request)
+
+
+@app.post("/api/v1/tasks/verify")
+async def verify_task(request: TaskVerificationRequest) -> dict:
+    return await verify_task_candidate(request)

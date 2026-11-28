@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -16,6 +17,7 @@ import * as path from 'path';
 import { request as undiciRequest } from 'undici';
 import { promisify } from 'util';
 import { Repository } from 'typeorm';
+import { VectorContextService } from '../analysis/vector-context.service';
 import { RepositoryAnalysisEntity } from '../analysis/entities/repository-analysis.entity';
 import { RepositoryEntity } from '../repositories/entities/repository.entity';
 import { RepositorySnapshotEntity } from '../repositories/entities/repository-snapshot.entity';
@@ -27,7 +29,7 @@ import { TaskVersionEntity } from './entities/task-version.entity';
 type Provider = 'openrouter' | 'ollama';
 type BuildOrTestStatus = 'not_run' | 'passed' | 'failed' | 'blocked' | 'not_configured';
 const execFileAsync = promisify(execFile);
-const MAX_PATCH_REPAIR_CHARS = 30_000;
+const MAX_PATCH_REPAIR_CHARS = 60_000;
 const MAX_PATCH_REPAIR_ERROR_CHARS = 2_000;
 const MAX_VALIDATION_RUNS = 5;
 
@@ -100,6 +102,8 @@ export class ReferenceSolutionsService {
     private readonly snapshots: Repository<RepositorySnapshotEntity>,
     @InjectRepository(RepositoryEntity)
     private readonly repositories: Repository<RepositoryEntity>,
+    @Optional()
+    private readonly vectorContext?: VectorContextService,
   ) {}
 
   async generate(taskId: string, input: GenerateReferenceInput = {}) {
@@ -619,6 +623,27 @@ export class ReferenceSolutionsService {
       const request = reference.input;
       const task = request.task as Record<string, unknown>;
       const repositories = await this.resolveBaseline(request.baselineManifest);
+      if (this.vectorContext) {
+        const queryText = [
+          typeof task.title === 'string' ? task.title : '',
+          typeof task.description === 'string' ? task.description : '',
+          ...(Array.isArray(task.requirements) ? task.requirements.filter((v): v is string => typeof v === 'string') : []),
+          ...(Array.isArray(task.acceptanceCriteria) ? task.acceptanceCriteria.filter((v): v is string => typeof v === 'string') : []),
+        ]
+          .filter(Boolean)
+          .join(' ');
+        if (queryText.trim()) {
+          const semanticBySnapshot = await this.vectorContext.retrieveSemanticChunks({
+            snapshotIds: repositories.map((repo) => String(repo.snapshot_id)),
+            queryText,
+            limit: 48,
+          });
+          for (const repository of repositories) {
+            const snapshotId = String(repository.snapshot_id);
+            repository.vector_chunks = semanticBySnapshot[snapshotId] ?? [];
+          }
+        }
+      }
       const repositoryPaths = new Map<string, string>();
       for (const repository of repositories) {
         if (typeof repository.repository_id === 'string'
@@ -844,7 +869,7 @@ export class ReferenceSolutionsService {
   }
 
   private async applyGitPatch(repositoryPath: string, patchPath: string, checkOnly: boolean) {
-    const args = ['apply', '--recount', '--whitespace=nowarn'];
+    const args = ['apply', '--recount', '--allow-binary-replacement', '--whitespace=nowarn'];
     if (checkOnly) {
       args.push('--check');
     }
@@ -971,9 +996,26 @@ export class ReferenceSolutionsService {
           }
         }
         if (validHunk && oldCount + newCount > 0) {
-          const oldStart = previousOldEnd === undefined
-            ? Number(hunkHeader[1])
-            : Math.max(Number(hunkHeader[1]), previousOldEnd + 1);
+          let oldStart = Number(hunkHeader[1]);
+          if (pinnedLines) {
+            const expectedOldLines = section.slice(hunkIndex + 1);
+            const expected: string[] = [];
+            for (const hunkLine of expectedOldLines) {
+              if (hunkLine.startsWith('@@ ') || hunkLine.startsWith('diff --git ')) {
+                break;
+              }
+              if (hunkLine.startsWith(' ') || hunkLine.startsWith('-')) {
+                expected.push(hunkLine.slice(1));
+              }
+            }
+            const anchored = this.findUniqueLineAnchor(pinnedLines, expected, oldStart);
+            if (anchored !== undefined) {
+              oldStart = anchored;
+            }
+          }
+          oldStart = previousOldEnd === undefined
+            ? oldStart
+            : Math.max(oldStart, previousOldEnd + 1);
           const newStart = previousNewEnd === undefined
             ? Number(hunkHeader[2])
             : Math.max(Number(hunkHeader[2]), previousNewEnd + 1);
@@ -1005,6 +1047,29 @@ export class ReferenceSolutionsService {
       return undefined;
     }
     return fs.readFileSync(filePath, 'utf8').replace(/\r\n/g, '\n').split('\n');
+  }
+
+  private findUniqueLineAnchor(pinnedLines: string[], expectedOld: string[], reportedStart: number): number | undefined {
+    if (expectedOld.length === 0 || expectedOld.length > pinnedLines.length) {
+      return undefined;
+    }
+    const zeroBasedReported = Math.max(0, reportedStart - 1);
+    if (
+      zeroBasedReported + expectedOld.length <= pinnedLines.length
+      && expectedOld.every((line, offset) => pinnedLines[zeroBasedReported + offset] === line)
+    ) {
+      return reportedStart;
+    }
+    const matches: number[] = [];
+    for (let start = 0; start <= pinnedLines.length - expectedOld.length; start += 1) {
+      if (expectedOld.every((line, offset) => pinnedLines[start + offset] === line)) {
+        matches.push(start + 1);
+        if (matches.length > 1) {
+          return undefined;
+        }
+      }
+    }
+    return matches.length === 1 ? matches[0] : undefined;
   }
 
   private hasUniqueAdjacentLines(lines: string[], previous: string, current: string, next: string) {
@@ -1068,6 +1133,8 @@ export class ReferenceSolutionsService {
       'package.json',
       'pyproject.toml',
       'requirements.txt',
+      'CMakeLists.txt',
+      'meson.build',
       'pom.xml',
       'build.gradle',
       'build.gradle.kts',
@@ -1087,6 +1154,8 @@ export class ReferenceSolutionsService {
       '.gradle',
       '.next',
       '.turbo',
+      'examples',
+      'docs',
     ]);
     const found: string[] = [];
     const visit = (directory: string, depth: number) => {
@@ -1118,11 +1187,25 @@ export class ReferenceSolutionsService {
     const buildArgs: string[][] = [];
     const testArgs: string[][] = [];
     const manifestFiles = this.findProjectManifests(repositoryPath);
+    const hasRootPnpmWorkspace = fs.existsSync(path.join(repositoryPath, 'pnpm-workspace.yaml'));
+    const rootPackageJsonPath = path.join(repositoryPath, 'package.json');
+    const rootPackageJson = fs.existsSync(rootPackageJsonPath)
+      ? JSON.parse(fs.readFileSync(rootPackageJsonPath, 'utf8')) as { workspaces?: unknown }
+      : null;
+    const isJsMonorepo = hasRootPnpmWorkspace || Boolean(rootPackageJson?.workspaces);
+    const hasRootCmake = manifestFiles.some(
+      (manifest) => path.basename(manifest) === 'CMakeLists.txt' && path.dirname(manifest) === repositoryPath,
+    );
+    const hasRootMeson = manifestFiles.some(
+      (manifest) => path.basename(manifest) === 'meson.build' && path.dirname(manifest) === repositoryPath,
+    );
+    let rootJsInstalled = false;
 
     for (const manifest of manifestFiles) {
       if (path.basename(manifest) === 'package.json') {
         const packageDirectory = path.dirname(manifest);
         const prefix = path.relative(repositoryPath, packageDirectory).replace(/\\/g, '/');
+        const isRootPackage = !prefix || prefix === '.';
         const packageJson = JSON.parse(fs.readFileSync(manifest, 'utf8')) as {
           packageManager?: string;
           scripts?: Record<string, unknown>;
@@ -1139,46 +1222,63 @@ export class ReferenceSolutionsService {
           : '';
         const packageManager = ['npm', 'pnpm', 'yarn'].includes(declaredPackageManager)
           ? declaredPackageManager
-          : fs.existsSync(path.join(packageDirectory, 'package-lock.json'))
-            ? 'npm'
-            : fs.existsSync(path.join(packageDirectory, 'pnpm-lock.yaml'))
+          : fs.existsSync(path.join(repositoryPath, 'pnpm-lock.yaml')) || fs.existsSync(path.join(packageDirectory, 'pnpm-lock.yaml'))
             ? 'pnpm'
-            : fs.existsSync(path.join(packageDirectory, 'yarn.lock'))
+            : fs.existsSync(path.join(repositoryPath, 'yarn.lock')) || fs.existsSync(path.join(packageDirectory, 'yarn.lock'))
               ? 'yarn'
-              : 'npm';
+              : fs.existsSync(path.join(packageDirectory, 'package-lock.json'))
+                ? 'npm'
+                : 'npm';
         const prefixArgs = prefix && prefix !== '.'
           ? ['--prefix', prefix]
           : [];
-        if (packageManager === 'npm') {
-          setup.push([
-            'npm',
-            ...prefixArgs,
-            'install',
-          ]);
-        } else if (packageManager === 'pnpm') {
-          setup.push([
-            'pnpm',
-            '--dir',
-            prefix || '.',
-            'install',
-            fs.existsSync(path.join(packageDirectory, 'pnpm-lock.yaml')) ? '--frozen-lockfile' : '--no-frozen-lockfile',
-          ]);
-        } else {
-          setup.push([
-            'yarn',
-            '--cwd',
-            prefix || '.',
-            'install',
-            fs.existsSync(path.join(packageDirectory, '.yarnrc.yml')) ? '--immutable' : '--frozen-lockfile',
-          ]);
+        if (!isJsMonorepo || isRootPackage) {
+          if (!isJsMonorepo || !rootJsInstalled) {
+            if (packageManager === 'npm') {
+              setup.push([
+                'npm',
+                ...prefixArgs,
+                'install',
+              ]);
+            } else if (packageManager === 'pnpm') {
+              setup.push([
+                'pnpm',
+                '--dir',
+                prefix || '.',
+                'install',
+                fs.existsSync(path.join(packageDirectory, 'pnpm-lock.yaml'))
+                || fs.existsSync(path.join(repositoryPath, 'pnpm-lock.yaml'))
+                  ? '--frozen-lockfile'
+                  : '--no-frozen-lockfile',
+              ]);
+            } else {
+              setup.push([
+                'yarn',
+                '--cwd',
+                prefix || '.',
+                'install',
+                fs.existsSync(path.join(packageDirectory, '.yarnrc.yml')) ? '--immutable' : '--frozen-lockfile',
+              ]);
+            }
+            if (isRootPackage) {
+              rootJsInstalled = true;
+            }
+          }
         }
-        if (typeof scripts.build === 'string') {
-          build.push(`${packageManager}${prefix ? ` --prefix ${prefix}` : ''} run build`);
+        const buildScriptName = typeof scripts.build === 'string'
+          ? 'build'
+          : typeof scripts.compile === 'string'
+            ? 'compile'
+            : typeof scripts.typecheck === 'string'
+              ? 'typecheck'
+              : null;
+        if (buildScriptName) {
+          build.push(`${packageManager}${prefix ? ` --prefix ${prefix}` : ''} run ${buildScriptName}`);
           buildArgs.push(packageManager === 'npm'
-            ? ['npm', ...prefixArgs, 'run', 'build']
+            ? ['npm', ...prefixArgs, 'run', buildScriptName]
             : [packageManager, ...(packageManager === 'pnpm'
-              ? ['--dir', prefix || '.', 'run', 'build']
-              : ['--cwd', prefix || '.', 'run', 'build'])]);
+              ? ['--dir', prefix || '.', 'run', buildScriptName]
+              : ['--cwd', prefix || '.', 'run', buildScriptName])]);
         }
         if (typeof scripts.test === 'string') {
           const testCommand = `${packageManager}${prefix ? ` --prefix ${prefix}` : ''} test`;
@@ -1201,13 +1301,21 @@ export class ReferenceSolutionsService {
           || fs.existsSync(path.join(packageDirectory, 'vitest.config.js'))) {
           const testCommand = `${packageManager}${prefix ? ` --prefix ${prefix}` : ''} exec vitest -- run`;
           tests.push(testCommand);
-          testArgs.push(['npm', ...prefixArgs, 'exec', 'vitest', '--', 'run']);
+          testArgs.push(packageManager === 'npm'
+            ? ['npm', ...prefixArgs, 'exec', 'vitest', '--', 'run']
+            : [packageManager, ...(packageManager === 'pnpm'
+              ? ['--dir', prefix || '.', 'exec', 'vitest', 'run']
+              : ['--cwd', prefix || '.', 'exec', 'vitest', 'run'])]);
         } else if (typeof dependencies.jest === 'string'
           || fs.existsSync(path.join(packageDirectory, 'jest.config.ts'))
           || fs.existsSync(path.join(packageDirectory, 'jest.config.js'))) {
           const testCommand = `${packageManager}${prefix ? ` --prefix ${prefix}` : ''} exec jest -- --runInBand`;
           tests.push(testCommand);
-          testArgs.push(['npm', ...prefixArgs, 'exec', 'jest', '--', '--runInBand']);
+          testArgs.push(packageManager === 'npm'
+            ? ['npm', ...prefixArgs, 'exec', 'jest', '--', '--runInBand']
+            : [packageManager, ...(packageManager === 'pnpm'
+              ? ['--dir', prefix || '.', 'exec', 'jest', '--runInBand']
+              : ['--cwd', prefix || '.', 'exec', 'jest', '--runInBand'])]);
         }
         continue;
       }
@@ -1223,14 +1331,49 @@ export class ReferenceSolutionsService {
         if (path.basename(manifest) === 'requirements.txt') {
           setup.push(['python3', '-m', 'pip', 'install', '-r', path.posix.join(prefix || '.', 'requirements.txt')]);
         } else {
-          setup.push(['python3', '-m', 'pip', 'install', '-e', prefix || '.']);
+          const pyprojectText = fs.readFileSync(manifest, 'utf8');
+          const hasTestExtra = /\[project\.optional-dependencies\][\s\S]*?^\s*(test|tests|dev)\s*=/im.test(pyprojectText);
+          const extraMatch = pyprojectText.match(/\[project\.optional-dependencies\][\s\S]*?^\s*(test|tests|dev)\s*=/im);
+          const target = hasTestExtra && extraMatch
+            ? `${prefix || '.'}[${extraMatch[1].toLowerCase()}]`
+            : (prefix || '.');
+          setup.push(['python3', '-m', 'pip', 'install', '-e', target]);
         }
         build.push(`python -m compileall -q ${prefix || '.'}`);
         buildArgs.push(['python', '-m', 'compileall', '-q', prefix || '.']);
-        if (fs.existsSync(path.join(projectDirectory, 'tests'))
-          || fs.existsSync(path.join(projectDirectory, 'test'))) {
-          tests.push(`python -m pytest ${prefix || '.'}`);
-          testArgs.push(['python', '-m', 'pytest', prefix || '.']);
+        // Always suggest pytest — the reference solution will create new test files
+        tests.push(`python -m pytest ${prefix || '.'}`);
+        testArgs.push(['python', '-m', 'pytest', prefix || '.']);
+      } else if (path.basename(manifest) === 'CMakeLists.txt') {
+        if (hasRootCmake && projectDirectory !== repositoryPath) {
+          continue;
+        }
+        const sourceDir = prefix || '.';
+        const buildDir = prefix && prefix !== '.' ? path.posix.join(prefix, 'build') : 'build';
+        const cmakeText = fs.readFileSync(manifest, 'utf8');
+        build.push(`cmake -S ${sourceDir} -B ${buildDir} -DCMAKE_BUILD_TYPE=Release`);
+        build.push(`cmake --build ${buildDir} -j2`);
+        buildArgs.push(['cmake', '-S', sourceDir, '-B', buildDir, '-DCMAKE_BUILD_TYPE=Release']);
+        buildArgs.push(['cmake', '--build', buildDir, '-j2']);
+        if (/\b(enable_testing|add_test|BUILD_TESTING)\b/i.test(cmakeText)
+          || fs.existsSync(path.join(projectDirectory, 'test'))
+          || fs.existsSync(path.join(projectDirectory, 'tests'))) {
+          tests.push(`ctest --test-dir ${buildDir} --output-on-failure`);
+          testArgs.push(['ctest', '--test-dir', buildDir, '--output-on-failure']);
+        }
+      } else if (path.basename(manifest) === 'meson.build') {
+        if (hasRootCmake || (hasRootMeson && projectDirectory !== repositoryPath)) {
+          continue;
+        }
+        const buildDir = prefix && prefix !== '.' ? path.posix.join(prefix, 'build') : 'build';
+        const mesonText = fs.readFileSync(manifest, 'utf8');
+        build.push(`meson setup ${buildDir}`);
+        build.push(`meson compile -C ${buildDir}`);
+        buildArgs.push(['meson', 'setup', buildDir]);
+        buildArgs.push(['meson', 'compile', '-C', buildDir]);
+        if (/\btest\s*\(/.test(mesonText)) {
+          tests.push(`meson test -C ${buildDir}`);
+          testArgs.push(['meson', 'test', '-C', buildDir]);
         }
       } else if (path.basename(manifest) === 'go.mod') {
         build.push(`go build ${prefix || '.'}`);
@@ -1255,6 +1398,9 @@ export class ReferenceSolutionsService {
         tests.push(`gradle${gradlePrefix.length ? ` ${gradlePrefix.join(' ')}` : ''} test`);
         testArgs.push(['gradle', ...gradlePrefix, 'test']);
       } else if (path.basename(manifest) === 'Makefile') {
+        if (hasRootCmake || hasRootMeson) {
+          continue;
+        }
         const makePrefix = prefix && prefix !== '.' ? ['-C', prefix] : [];
         build.push(`make${makePrefix.length ? ` ${makePrefix.join(' ')}` : ''} build`);
         buildArgs.push(['make', ...makePrefix, 'build']);

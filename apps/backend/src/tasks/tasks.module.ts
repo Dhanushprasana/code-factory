@@ -1,6 +1,7 @@
 import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AnalysisModule } from '../analysis/analysis.module';
 import { RepositoryAnalysisEntity } from '../analysis/entities/repository-analysis.entity';
 import { ProjectEntity } from '../projects/entities/project.entity';
 import { ProjectRepositoryEntity } from '../repositories/entities/project-repository.entity';
@@ -17,6 +18,7 @@ import { TasksService } from './tasks.service';
 
 @Module({
   imports: [
+    AnalysisModule,
     BullModule.registerQueue({ name: 'reference-generation' }),
     TypeOrmModule.forFeature([
       ProjectEntity,

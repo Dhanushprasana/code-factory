@@ -16,6 +16,7 @@ import { AgentsModule } from './agents/agents.module';
 import { TasksModule } from './tasks/tasks.module';
 import { AgentsBenchmarkModule } from './executions/agents-benchmark.module';
 import { AgentExecutions1795280600000 } from './database/migrations/1795280600000-AgentExecutions';
+import { VectorAndGraphContext1795280700000 } from './database/migrations/1795280700000-VectorAndGraphContext';
 import { CreateTaskFactoryTables1710000000002 } from './database/migrations/1710000000002-CreateTaskFactoryTables';
 import { ReferenceSolutions1795280500000 } from './database/migrations/1795280500000-ReferenceSolutions';
 
@@ -48,6 +49,7 @@ import { ReferenceSolutions1795280500000 } from './database/migrations/179528050
           CreateTaskFactoryTables1710000000002,
           ReferenceSolutions1795280500000,
           AgentExecutions1795280600000,
+          VectorAndGraphContext1795280700000,
         ],
         migrationsRun: true,
         synchronize: true,
